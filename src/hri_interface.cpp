@@ -11,6 +11,7 @@
 #include <tf2/impl/utils.h>
 #include <tf2_eigen/tf2_eigen.h>
 #include <moveit/collision_detection_bullet/collision_detector_allocator_bullet.h>
+#include <moveit/trajectory_processing/iterative_time_parameterization.h>
 #include <memory>
 #include <functional>
 #include <algorithm>
@@ -459,7 +460,6 @@ bool HRI_Interface::goAway(std::string target_frame)
     return true;
 }
 
-// bool mode (true = screw, false = unscrew)
 bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
 {
 
@@ -487,7 +487,7 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
 
     moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
 
-    if (!computeLookPose(arm_state, initial_pose, input_pose, 20, 0.5, 0.5))
+    if (!computeLookPose(arm_state, initial_pose, input_pose, 20, 0.2, 0.5, 0.5))
     {
         return false;
     }
@@ -507,8 +507,6 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
         ROS_ERROR("Can't plan for initial position");
         return false;
     }
-
-    // Perform action of EndEffector
 
     arm_state.setJointGroupPositions(arm_jmg_, planSetInitialPosition.trajectory_.joint_trajectory.points.back().positions);
     arm_mgi_->setStartState(arm_state);
@@ -584,313 +582,6 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
     arm_mgi_->execute(trajectory);
     visual_tools_->deleteAllMarkers();
 
-    return true;
-}
-
-bool HRI_Interface::pointToPoint(geometry_msgs::Point point)
-{
-    visual_tools_->deleteAllMarkers();
-
-    // Create a vector from shoulder to object to calculate pose
-
-    arm_mgi_->setStartStateToCurrentState();
-    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
-
-    Eigen::Isometry3d linkTransform = arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().at(0));
-
-    double xTarget = point.x - linkTransform.translation().x();
-    double yTarget = point.y - linkTransform.translation().y();
-    double zTarget = point.z - linkTransform.translation().z();
-
-    double distance = sqrt(pow(xTarget, 2) + pow(yTarget, 2) + pow(zTarget, 2));
-
-    double targetDistance = distance - 0.20 >= 0.6 ? 0.6 : distance - 0.20;
-
-    double scalingFactor = (targetDistance) / distance;
-
-    xTarget *= scalingFactor;
-    yTarget *= scalingFactor;
-    zTarget *= scalingFactor;
-
-    double sideAngle = atan2(yTarget, xTarget);
-    double tiltAngle = M_PI_2 - atan2(zTarget, sqrt(pow(xTarget, 2) + pow(yTarget, 2)));
-
-    tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
-    tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
-    tf2::Quaternion qresult = q1 * q2;
-    qresult.normalize();
-
-    geometry_msgs::Quaternion q_msg;
-    tf2::convert(qresult, q_msg);
-
-    geometry_msgs::Pose lookPose;
-    lookPose.position.x = linkTransform.translation().x() + xTarget;
-    lookPose.position.y = linkTransform.translation().y() + yTarget;
-    lookPose.position.z = linkTransform.translation().z() + zTarget;
-    lookPose.orientation = q_msg;
-
-    visual_tools_->publishAxis(lookPose);
-    visual_tools_->trigger();
-
-    geometry_msgs::Pose pointPose;
-    pointPose.position = point;
-    pointPose.orientation.w = 1.0;
-
-    if (!computeLookPose(arm_state, lookPose, pointPose, 10, 2.0, 2.0))
-    {
-        return false;
-    }
-
-    std::vector<double> lookPose_joint_positions;
-    arm_state.copyJointGroupPositions(arm_jmg_, lookPose_joint_positions);
-    arm_mgi_->setJointValueTarget(lookPose_joint_positions);
-    moveit::planning_interface::MoveGroupInterface::Plan plan;
-    if (!(arm_mgi_->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS))
-    {
-        ROS_ERROR("Can't plan for pointing movement");
-        return false;
-    }
-    arm_mgi_->execute(plan);
-    return true;
-}
-
-bool HRI_Interface::pointToObject(std::string object_id)
-{
-    visual_tools_->deleteAllMarkers();
-
-    // Obtain object from scene
-    std::map<std::string, moveit_msgs::CollisionObject> objects = planning_scene_interface_->getObjects();
-
-    // Find position of object
-    moveit_msgs::CollisionObject object = objects[object_id];
-    geometry_msgs::Pose object_pose = object.pose;
-
-    double radius = sqrt(pow(object.primitives[0].dimensions[0], 2) + pow(object.primitives[0].dimensions[1], 2) + pow(object.primitives[0].dimensions[2], 2));
-    visual_tools_->publishAxis(object.pose);
-    visual_tools_->trigger();
-
-    // Create a vector from shoulder to object to calculate pose
-
-    arm_mgi_->setStartStateToCurrentState();
-    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
-
-    Eigen::Isometry3d linkTransform = arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().at(0));
-
-    double xTarget = object_pose.position.x - linkTransform.translation().x();
-    double yTarget = object_pose.position.y - linkTransform.translation().y();
-    double zTarget = object_pose.position.z - linkTransform.translation().z();
-
-    double distance = sqrt(pow(xTarget, 2) + pow(yTarget, 2) + pow(zTarget, 2));
-
-    double targetDistance = distance - radius - 0.15 >= 0.6 ? 0.6 : distance - radius - 0.15;
-
-    double scalingFactor = (targetDistance) / distance;
-
-    xTarget *= scalingFactor;
-    yTarget *= scalingFactor;
-    zTarget *= scalingFactor;
-
-    double sideAngle = atan2(yTarget, xTarget);
-    double tiltAngle = M_PI_2 - atan2(zTarget, sqrt(pow(xTarget, 2) + pow(yTarget, 2)));
-
-    tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
-    tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
-    tf2::Quaternion qresult = q1 * q2;
-    qresult.normalize();
-
-    geometry_msgs::Quaternion q_msg;
-    tf2::convert(qresult, q_msg);
-
-    geometry_msgs::Pose lookPose;
-    lookPose.position.x = linkTransform.translation().x() + xTarget;
-    lookPose.position.y = linkTransform.translation().y() + yTarget;
-    lookPose.position.z = linkTransform.translation().z() + zTarget;
-    lookPose.orientation = q_msg;
-
-    visual_tools_->publishAxis(lookPose);
-    visual_tools_->trigger();
-
-    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 2.0, 2.0))
-    {
-        return false;
-    }
-
-    std::vector<double> lookPose_joint_positions;
-    arm_state.copyJointGroupPositions(arm_jmg_, lookPose_joint_positions);
-    arm_mgi_->setJointValueTarget(lookPose_joint_positions);
-    moveit::planning_interface::MoveGroupInterface::Plan plan;
-    if (!(arm_mgi_->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS))
-    {
-        ROS_ERROR("Can't plan for pointing movement");
-        return false;
-    }
-    arm_mgi_->execute(plan);
-    return true;
-}
-
-bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sideInfo)
-{
-
-    visual_tools_->deleteAllMarkers();
-
-    // Obtain object from scene
-    std::map<std::string, moveit_msgs::CollisionObject> objects = planning_scene_interface_->getObjects();
-
-    const double tolerance = 1e-6;
-    if (objects.count(object_id) == 0)
-    {
-        ROS_ERROR("Object does not exist.");
-        return false;
-    }
-    if (!(sideInfo.isApprox(Eigen::Vector3d(1, 0, 0), tolerance) || sideInfo.isApprox(Eigen::Vector3d(-1, 0, 0), tolerance) ||
-          sideInfo.isApprox(Eigen::Vector3d(0, 1, 0), tolerance) || sideInfo.isApprox(Eigen::Vector3d(0, -1, 0), tolerance) ||
-          sideInfo.isApprox(Eigen::Vector3d(0, 0, 1), tolerance) || sideInfo.isApprox(Eigen::Vector3d(0, 0, -1), tolerance)))
-    {
-        ROS_ERROR("Side information is invalid! Must only provide information about one axis [x, y or z] and direction [1 or -1]");
-        return false;
-    }
-
-    // Find position of object
-    moveit_msgs::CollisionObject object = objects[object_id];
-    geometry_msgs::Pose object_pose = object.pose;
-
-    double radius = sqrt(pow(object.primitives[0].dimensions[0], 2) + pow(object.primitives[0].dimensions[1], 2) + pow(object.primitives[0].dimensions[2], 2));
-    visual_tools_->publishAxis(object_pose);
-    visual_tools_->trigger();
-
-    // Create a vector from shoulder to object to calculate pose
-
-    Eigen::Isometry3d objectEigen;
-    visual_tools_->convertPoseSafe(object_pose, objectEigen);
-
-    objectEigen.translate(sideInfo * (radius + 0.1));
-
-    visual_tools_->publishAxis(objectEigen);
-    visual_tools_->trigger();
-
-    double xTarget = object_pose.position.x - objectEigen.translation().x();
-    double yTarget = object_pose.position.y - objectEigen.translation().y();
-    double zTarget = object_pose.position.z - objectEigen.translation().z();
-
-    double sideAngle = atan2(yTarget, xTarget);
-    double tiltAngle = M_PI_2 - atan2(zTarget, sqrt(pow(xTarget, 2) + pow(yTarget, 2)));
-
-    tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
-    tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
-    tf2::Quaternion qresult = q1 * q2;
-    qresult.normalize();
-
-    geometry_msgs::Quaternion q_msg;
-    tf2::convert(qresult, q_msg);
-
-    geometry_msgs::Pose lookPose;
-    lookPose.position.x = objectEigen.translation().x();
-    lookPose.position.y = objectEigen.translation().y();
-    lookPose.position.z = objectEigen.translation().z();
-    lookPose.orientation = q_msg;
-
-    visual_tools_->publishAxis(lookPose);
-    visual_tools_->trigger();
-
-    arm_mgi_->setStartStateToCurrentState();
-    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
-
-    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 0.75, 0.75))
-    {
-        return false;
-    }
-
-    std::vector<double>
-        lookPose_joint_values;
-    arm_state.copyJointGroupPositions(arm_jmg_, lookPose_joint_values);
-
-    arm_mgi_->setJointValueTarget(lookPose_joint_values);
-    moveit::planning_interface::MoveGroupInterface::Plan plan;
-    if (!(arm_mgi_->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS))
-    {
-        ROS_ERROR("Can't plan for pointing movement");
-        return false;
-    }
-    arm_mgi_->execute(plan);
-
-    return true;
-}
-
-bool HRI_Interface::pointToHuman(std::string target_frame)
-{
-    visual_tools_->deleteAllMarkers();
-
-    // Calculate New Pose Looking at Human
-    geometry_msgs::TransformStamped targetTransform;
-
-    // Get transform from human position in reference to base_link
-
-    if (!transformListener(target_frame, "yumi_base_link", targetTransform))
-    {
-        ROS_ERROR("Can't perform transform");
-        return false;
-    }
-
-    arm_mgi_->setStartStateToCurrentState();
-    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
-
-    Eigen::Isometry3d linkTransform = arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().at(0));
-
-    double xTarget = targetTransform.transform.translation.x - linkTransform.translation().x();
-    double yTarget = targetTransform.transform.translation.y - linkTransform.translation().y();
-    double zTarget = targetTransform.transform.translation.z - linkTransform.translation().z();
-
-    double distance = sqrt(pow(xTarget, 2) + pow(yTarget, 2) + pow(zTarget, 2));
-
-    double targetDistance = distance - 0.5 >= 0.6 ? 0.6 : distance - 0.5;
-
-    double scalingFactor = (targetDistance) / distance;
-
-    xTarget *= scalingFactor;
-    yTarget *= scalingFactor;
-    zTarget *= scalingFactor;
-
-    double sideAngle = atan2(yTarget, xTarget);
-    double tiltAngle = M_PI_2 - atan2(zTarget, sqrt(pow(xTarget, 2) + pow(yTarget, 2)));
-
-    tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
-    tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
-    tf2::Quaternion qresult = q1 * q2;
-    qresult.normalize();
-
-    geometry_msgs::Quaternion q_msg;
-    tf2::convert(qresult, q_msg);
-
-    geometry_msgs::Pose lookPose;
-    lookPose.position.x = linkTransform.translation().x() + xTarget;
-    lookPose.position.y = linkTransform.translation().y() + yTarget;
-    lookPose.position.z = linkTransform.translation().z() + zTarget;
-    lookPose.orientation = q_msg;
-
-    visual_tools_->publishAxis(lookPose);
-    visual_tools_->trigger();
-
-    geometry_msgs::Pose humanPose;
-    humanPose.position.x = targetTransform.transform.translation.x;
-    humanPose.position.y = targetTransform.transform.translation.y;
-    humanPose.position.z = targetTransform.transform.translation.z;
-    humanPose.orientation.w = 1;
-
-    if (!computeLookPose(arm_state, lookPose, humanPose, 10, 2.0, 2.0))
-    {
-        return false;
-    }
-
-    std::vector<double> lookPose_joint_positions;
-    arm_state.copyJointGroupPositions(arm_jmg_, lookPose_joint_positions);
-    arm_mgi_->setJointValueTarget(lookPose_joint_positions);
-    moveit::planning_interface::MoveGroupInterface::Plan plan;
-    if (!(arm_mgi_->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS))
-    {
-        ROS_ERROR("Can't plan for pointing movement");
-        return false;
-    }
-    arm_mgi_->execute(plan);
     return true;
 }
 
@@ -992,7 +683,7 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
         visual_tools_->publishAxis(lookPose);
         visual_tools_->trigger();
 
-        if (computeLookPose(arm_state, lookPose, object_pose, 10, 1.0, 1.0))
+        if (computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 1.0, 1.0))
         {
             sucess_pose = true;
             break;
@@ -1040,9 +731,9 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
     Eigen::Vector3d look_z_axis = look_orientation * Eigen::Vector3d::UnitZ();
 
     Eigen::Quaterniond object_orientation(object_pose.orientation.w, object_pose.orientation.x, object_pose.orientation.y, object_pose.orientation.z);
-    Eigen::Vector3d object_x_axis = object_orientation * rotationInfo;
+    Eigen::Vector3d object_rotation_vector = object_orientation * rotationInfo;
 
-    if (look_z_axis.dot(object_x_axis) > 0)
+    if (look_z_axis.dot(object_rotation_vector) > 0)
     {
         rotated_joint_values.back() += M_PI_2;
     }
@@ -1077,10 +768,328 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
     return true;
 }
 
+bool HRI_Interface::pointToPoint(geometry_msgs::Point point)
+{
+    visual_tools_->deleteAllMarkers();
+
+    arm_mgi_->setStartStateToCurrentState();
+    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
+
+    // Create a vector from shoulder to object to calculate pose
+
+    Eigen::Isometry3d linkTransform = arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().at(0));
+
+    double xTarget = point.x - linkTransform.translation().x();
+    double yTarget = point.y - linkTransform.translation().y();
+    double zTarget = point.z - linkTransform.translation().z();
+
+    double distance = sqrt(pow(xTarget, 2) + pow(yTarget, 2) + pow(zTarget, 2));
+
+    double targetDistance = distance - 0.20 >= 0.6 ? 0.6 : distance - 0.20;
+
+    double scalingFactor = (targetDistance) / distance;
+
+    xTarget *= scalingFactor;
+    yTarget *= scalingFactor;
+    zTarget *= scalingFactor;
+
+    double sideAngle = atan2(yTarget, xTarget);
+    double tiltAngle = M_PI_2 - atan2(zTarget, sqrt(pow(xTarget, 2) + pow(yTarget, 2)));
+
+    tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
+    tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
+    tf2::Quaternion qresult = q1 * q2;
+    qresult.normalize();
+
+    geometry_msgs::Quaternion q_msg;
+    tf2::convert(qresult, q_msg);
+
+    geometry_msgs::Pose lookPose;
+    lookPose.position.x = linkTransform.translation().x() + xTarget;
+    lookPose.position.y = linkTransform.translation().y() + yTarget;
+    lookPose.position.z = linkTransform.translation().z() + zTarget;
+    lookPose.orientation = q_msg;
+
+    visual_tools_->publishAxis(lookPose);
+    visual_tools_->trigger();
+
+    geometry_msgs::Pose pointPose;
+    pointPose.position = point;
+    pointPose.orientation.w = 1.0;
+
+    if (!computeLookPose(arm_state, lookPose, pointPose, 10, 0.2, 2.0, 2.0))
+    {
+        return false;
+    }
+
+    std::vector<double> lookPose_joint_positions;
+    arm_state.copyJointGroupPositions(arm_jmg_, lookPose_joint_positions);
+    arm_mgi_->setJointValueTarget(lookPose_joint_positions);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    if (!(arm_mgi_->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS))
+    {
+        ROS_ERROR("Can't plan for pointing movement");
+        return false;
+    }
+
+    gripper_mgi_->setNamedTarget("close");
+    gripper_mgi_->move();
+    arm_mgi_->execute(plan);
+    return true;
+}
+
+bool HRI_Interface::pointToObject(std::string object_id)
+{
+    visual_tools_->deleteAllMarkers();
+
+    // Obtain object from scene
+    std::map<std::string, moveit_msgs::CollisionObject> objects = planning_scene_interface_->getObjects();
+
+    // Find position of object
+    moveit_msgs::CollisionObject object = objects[object_id];
+    geometry_msgs::Pose object_pose = object.pose;
+
+    double radius = sqrt(pow(object.primitives[0].dimensions[0], 2) + pow(object.primitives[0].dimensions[1], 2) + pow(object.primitives[0].dimensions[2], 2));
+    visual_tools_->publishSphere(object_pose, rviz_visual_tools::PINK, radius);
+    visual_tools_->publishAxis(object.pose);
+    visual_tools_->trigger();
+
+    visual_tools_->prompt("");
+
+    // Create a vector from shoulder to object to calculate pose
+
+    arm_mgi_->setStartStateToCurrentState();
+    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
+
+    Eigen::Isometry3d linkTransform = arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().at(0));
+
+    double xTarget = object_pose.position.x - linkTransform.translation().x();
+    double yTarget = object_pose.position.y - linkTransform.translation().y();
+    double zTarget = object_pose.position.z - linkTransform.translation().z();
+
+    double distance = sqrt(pow(xTarget, 2) + pow(yTarget, 2) + pow(zTarget, 2));
+
+    double targetDistance = distance - radius - 0.15 >= 0.6 ? 0.6 : distance - radius - 0.15;
+
+    double scalingFactor = (targetDistance) / distance;
+
+    xTarget *= scalingFactor;
+    yTarget *= scalingFactor;
+    zTarget *= scalingFactor;
+
+    double sideAngle = atan2(yTarget, xTarget);
+    double tiltAngle = M_PI_2 - atan2(zTarget, sqrt(pow(xTarget, 2) + pow(yTarget, 2)));
+
+    tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
+    tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
+    tf2::Quaternion qresult = q1 * q2;
+    qresult.normalize();
+
+    geometry_msgs::Quaternion q_msg;
+    tf2::convert(qresult, q_msg);
+
+    geometry_msgs::Pose lookPose;
+    lookPose.position.x = linkTransform.translation().x() + xTarget;
+    lookPose.position.y = linkTransform.translation().y() + yTarget;
+    lookPose.position.z = linkTransform.translation().z() + zTarget;
+    lookPose.orientation = q_msg;
+
+    visual_tools_->publishAxis(lookPose);
+    visual_tools_->trigger();
+
+    visual_tools_->prompt("");
+
+    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 2.0, 2.0))
+    {
+        return false;
+    }
+
+    std::vector<double> lookPose_joint_positions;
+    arm_state.copyJointGroupPositions(arm_jmg_, lookPose_joint_positions);
+    arm_mgi_->setJointValueTarget(lookPose_joint_positions);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    if (!(arm_mgi_->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS))
+    {
+        ROS_ERROR("Can't plan for pointing movement");
+        return false;
+    }
+    gripper_mgi_->setNamedTarget("close");
+    gripper_mgi_->move();
+    arm_mgi_->execute(plan);
+    return true;
+}
+
+bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sideInfo)
+{
+
+    visual_tools_->deleteAllMarkers();
+
+    // Obtain object from scene
+    std::map<std::string, moveit_msgs::CollisionObject> objects = planning_scene_interface_->getObjects();
+
+    const double tolerance = 1e-6;
+    if (objects.count(object_id) == 0)
+    {
+        ROS_ERROR("Object does not exist.");
+        return false;
+    }
+    if (!(sideInfo.isApprox(Eigen::Vector3d(1, 0, 0), tolerance) || sideInfo.isApprox(Eigen::Vector3d(-1, 0, 0), tolerance) ||
+          sideInfo.isApprox(Eigen::Vector3d(0, 1, 0), tolerance) || sideInfo.isApprox(Eigen::Vector3d(0, -1, 0), tolerance) ||
+          sideInfo.isApprox(Eigen::Vector3d(0, 0, 1), tolerance) || sideInfo.isApprox(Eigen::Vector3d(0, 0, -1), tolerance)))
+    {
+        ROS_ERROR("Side information is invalid! Must only provide information about one axis [x, y or z] and direction [1 or -1]");
+        return false;
+    }
+
+    // Find position of object
+    moveit_msgs::CollisionObject object = objects[object_id];
+    geometry_msgs::Pose object_pose = object.pose;
+
+    double radius = sqrt(pow(object.primitives[0].dimensions[0], 2) + pow(object.primitives[0].dimensions[1], 2) + pow(object.primitives[0].dimensions[2], 2));
+    visual_tools_->publishAxis(object_pose);
+    visual_tools_->trigger();
+
+    // Create a vector from shoulder to object to calculate pose
+
+    Eigen::Isometry3d objectEigen;
+    visual_tools_->convertPoseSafe(object_pose, objectEigen);
+
+    objectEigen.translate(sideInfo * (radius + 0.1));
+
+    visual_tools_->publishAxis(objectEigen);
+    visual_tools_->trigger();
+
+    double xTarget = object_pose.position.x - objectEigen.translation().x();
+    double yTarget = object_pose.position.y - objectEigen.translation().y();
+    double zTarget = object_pose.position.z - objectEigen.translation().z();
+
+    double sideAngle = atan2(yTarget, xTarget);
+    double tiltAngle = M_PI_2 - atan2(zTarget, sqrt(pow(xTarget, 2) + pow(yTarget, 2)));
+
+    tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
+    tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
+    tf2::Quaternion qresult = q1 * q2;
+    qresult.normalize();
+
+    geometry_msgs::Quaternion q_msg;
+    tf2::convert(qresult, q_msg);
+
+    geometry_msgs::Pose lookPose;
+    lookPose.position.x = objectEigen.translation().x();
+    lookPose.position.y = objectEigen.translation().y();
+    lookPose.position.z = objectEigen.translation().z();
+    lookPose.orientation = q_msg;
+
+    visual_tools_->publishAxis(lookPose);
+    visual_tools_->trigger();
+
+    arm_mgi_->setStartStateToCurrentState();
+    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
+
+    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 0.75, 0.75))
+    {
+        return false;
+    }
+
+    std::vector<double>
+        lookPose_joint_values;
+    arm_state.copyJointGroupPositions(arm_jmg_, lookPose_joint_values);
+
+    arm_mgi_->setJointValueTarget(lookPose_joint_values);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    if (!(arm_mgi_->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS))
+    {
+        ROS_ERROR("Can't plan for pointing movement");
+        return false;
+    }
+    arm_mgi_->execute(plan);
+
+    return true;
+}
+
+bool HRI_Interface::pointToHuman(std::string target_frame)
+{
+    visual_tools_->deleteAllMarkers();
+
+    // Calculate New Pose Looking at Human
+    geometry_msgs::TransformStamped targetTransform;
+
+    // Get transform from human position in reference to base_link
+
+    if (!transformListener(target_frame, "yumi_base_link", targetTransform))
+    {
+        ROS_ERROR("Can't perform transform");
+        return false;
+    }
+
+    arm_mgi_->setStartStateToCurrentState();
+    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
+
+    Eigen::Isometry3d linkTransform = arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().at(0));
+
+    double xTarget = targetTransform.transform.translation.x - linkTransform.translation().x();
+    double yTarget = targetTransform.transform.translation.y - linkTransform.translation().y();
+    double zTarget = targetTransform.transform.translation.z - linkTransform.translation().z();
+
+    double distance = sqrt(pow(xTarget, 2) + pow(yTarget, 2) + pow(zTarget, 2));
+
+    double targetDistance = distance - 0.5 >= 0.6 ? 0.6 : distance - 0.5;
+
+    double scalingFactor = (targetDistance) / distance;
+
+    xTarget *= scalingFactor;
+    yTarget *= scalingFactor;
+    zTarget *= scalingFactor;
+
+    double sideAngle = atan2(yTarget, xTarget);
+    double tiltAngle = M_PI_2 - atan2(zTarget, sqrt(pow(xTarget, 2) + pow(yTarget, 2)));
+
+    tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
+    tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
+    tf2::Quaternion qresult = q1 * q2;
+    qresult.normalize();
+
+    geometry_msgs::Quaternion q_msg;
+    tf2::convert(qresult, q_msg);
+
+    geometry_msgs::Pose lookPose;
+    lookPose.position.x = linkTransform.translation().x() + xTarget;
+    lookPose.position.y = linkTransform.translation().y() + yTarget;
+    lookPose.position.z = linkTransform.translation().z() + zTarget;
+    lookPose.orientation = q_msg;
+
+    visual_tools_->publishAxis(lookPose);
+    visual_tools_->trigger();
+
+    geometry_msgs::Pose humanPose;
+    humanPose.position.x = targetTransform.transform.translation.x;
+    humanPose.position.y = targetTransform.transform.translation.y;
+    humanPose.position.z = targetTransform.transform.translation.z;
+    humanPose.orientation.w = 1;
+
+    if (!computeLookPose(arm_state, lookPose, humanPose, 10, 0.2, 2.0, 2.0))
+    {
+        return false;
+    }
+
+    std::vector<double> lookPose_joint_positions;
+    arm_state.copyJointGroupPositions(arm_jmg_, lookPose_joint_positions);
+    arm_mgi_->setJointValueTarget(lookPose_joint_positions);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    if (!(arm_mgi_->plan(plan) == moveit::core::MoveItErrorCode::SUCCESS))
+    {
+        ROS_ERROR("Can't plan for pointing movement");
+        return false;
+    }
+    gripper_mgi_->setNamedTarget("close");
+    gripper_mgi_->move();
+    arm_mgi_->execute(plan);
+    return true;
+}
+
 // HELPER FUNCTIONS
 
-bool HRI_Interface::transformListener(std::string source_frame, std::string target_frame,
-                                      geometry_msgs::TransformStamped &transform_stamped)
+bool HRI_Interface::transformListener(std::string source_frame, std::string target_frame, geometry_msgs::TransformStamped &transform_stamped)
 {
     tf2_ros::Buffer tfBuffer;
     tf2_ros::TransformListener tfListener(tfBuffer);
@@ -1152,7 +1161,7 @@ std::vector<Eigen::Isometry3d> HRI_Interface::findClosestApproachOption(const st
     return sorted_approach_options;
 }
 
-std::vector<geometry_msgs::Pose> HRI_Interface::computePointsOnSphere(int numPoints, geometry_msgs::Point point, geometry_msgs::Point reference_position, double theta_distance, double phi_distance)
+std::vector<geometry_msgs::Pose> HRI_Interface::computePointsOnSphere(int numPoints, geometry_msgs::Point point, geometry_msgs::Point reference_position, double extent, double theta_distance, double phi_distance)
 {
     double theta, phi; // Polar and azimuthal angles
 
@@ -1169,35 +1178,42 @@ std::vector<geometry_msgs::Pose> HRI_Interface::computePointsOnSphere(int numPoi
     std::vector<geometry_msgs::Pose> poses;
 
     // Compute points around the given point on the sphere
-    for (int i = -numPoints / 2; i < numPoints / 2; ++i)
+    for (double radiusValue = r; radiusValue < r + extent; radiusValue += extent / 5)
     {
-        double newTheta = theta + (i * theta_distance / numPoints); // Incrementing the polar angle
-        for (int j = -numPoints / 2; j < numPoints / 2; ++j)
+        for (int i = -numPoints / 2; i < numPoints / 2; ++i)
         {
-            double newPhi = phi + (j * phi_distance / numPoints); // Incrementing the azimuthal angle
-            geometry_msgs::Pose newPoint;
-            newPoint.position.x = r * sin(newTheta) * cos(newPhi);
-            newPoint.position.y = r * sin(newTheta) * sin(newPhi);
-            newPoint.position.z = r * cos(newTheta);
+            double newTheta = theta + (i * theta_distance / numPoints); // Incrementing the polar angle
+            for (int j = -numPoints / 2; j < numPoints / 2; ++j)
+            {
+                double newPhi = phi + (j * phi_distance / numPoints); // Incrementing the azimuthal angle
+                geometry_msgs::Pose newPoint;
+                newPoint.position.x = radiusValue * sin(newTheta) * cos(newPhi);
+                newPoint.position.y = radiusValue * sin(newTheta) * sin(newPhi);
+                newPoint.position.z = radiusValue * cos(newTheta);
 
-            double sideAngle = atan2(newPoint.position.y, newPoint.position.x);
-            double tiltAngle = -M_PI_2 - atan2(newPoint.position.z, sqrt(pow(newPoint.position.x, 2) + pow(newPoint.position.y, 2)));
+                double sideAngle = atan2(newPoint.position.y, newPoint.position.x);
+                double tiltAngle = -M_PI_2 - atan2(newPoint.position.z, sqrt(pow(newPoint.position.x, 2) + pow(newPoint.position.y, 2)));
 
-            tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
-            tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
-            tf2::Quaternion qresult = q1 * q2;
-            qresult.normalize();
+                tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
+                tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
+                tf2::Quaternion qresult = q1 * q2;
+                qresult.normalize();
 
-            geometry_msgs::Quaternion q_msg;
-            tf2::convert(qresult, q_msg);
+                geometry_msgs::Quaternion q_msg;
+                tf2::convert(qresult, q_msg);
 
-            newPoint.position.x += reference_position.x;
-            newPoint.position.y += reference_position.y;
-            newPoint.position.z += reference_position.z;
-            newPoint.orientation = q_msg;
+                newPoint.position.x += reference_position.x;
+                newPoint.position.y += reference_position.y;
+                newPoint.position.z += reference_position.z;
+                newPoint.orientation = q_msg;
 
-            poses.push_back(newPoint);
+                poses.push_back(newPoint);
+
+                visual_tools_->publishAxis(newPoint);
+            }
         }
+        visual_tools_->trigger();
+        visual_tools_->prompt("");
     }
 
     std::sort(poses.begin(), poses.end(), [&point](const geometry_msgs::Pose &p1, const geometry_msgs::Pose &p2)
@@ -1232,16 +1248,14 @@ bool HRI_Interface::isStateValid(moveit::core::RobotState *arm_state, const move
     return !collision_result.collision;
 }
 
-// TODO- Add maxDistanceFromPose
-bool HRI_Interface::computeLookPose(moveit::core::RobotState &arm_state, geometry_msgs::Pose lookPose, geometry_msgs::Pose focus_position, int numPoints, double theta, double phi)
+bool HRI_Interface::computeLookPose(moveit::core::RobotState &arm_state, geometry_msgs::Pose lookPose, geometry_msgs::Pose focus_position, int numPoints, double extent, double theta, double phi)
 {
     if (!arm_state.setFromIK(arm_jmg_, lookPose, 0.1, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
     {
-        std::vector<geometry_msgs::Pose> pose_vector = computePointsOnSphere(numPoints, lookPose.position, focus_position.position, theta, phi);
+        std::vector<geometry_msgs::Pose> pose_vector = computePointsOnSphere(numPoints, lookPose.position, focus_position.position, extent, theta, phi);
 
         for (const auto &pose : pose_vector)
         {
-
             visual_tools_->publishAxis(pose);
             visual_tools_->trigger();
 

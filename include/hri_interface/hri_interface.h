@@ -12,6 +12,7 @@
 #include <tf2/impl/utils.h>
 #include <tf2_eigen/tf2_eigen.h>
 #include <moveit/collision_detection_bullet/collision_env_bullet.h>
+#include <moveit/trajectory_processing/iterative_time_parameterization.h>
 #include <memory>
 #include <functional>
 #include <algorithm>
@@ -32,14 +33,14 @@ public:
     bool waving(std::string target_frame);
     bool comeClose(std::string target_frame);
     bool goAway(std::string target_frame);
-    // bool mode (true = screw, false = unscrew)
+    /* bool mode (true = screw, false = unscrew) */
     bool screw_unscrew(bool mode, geometry_msgs::Pose input_pose);
+    void signalPick();
+    bool signalRotate(std::string object_id, Eigen::Vector3d rotationInfo);
     bool pointToPoint(geometry_msgs::Point point);
     bool pointToObject(std::string object_id);
     bool pointToObjectSide(std::string object_id, Eigen::Vector3d sideInfo);
     bool pointToHuman(std::string target_frame);
-    void signalPick();
-    bool signalRotate(std::string object_id, Eigen::Vector3d rotationInfo);
 
 private:
     ros::NodeHandle n_;
@@ -63,9 +64,9 @@ private:
     void updatePlanningScene(std::shared_ptr<planning_scene::PlanningScene> planning_scene);
     void prePlanPick();
     std::vector<Eigen::Isometry3d> findClosestApproachOption(const std::vector<Eigen::Isometry3d> &approach_options, const Eigen::Isometry3d &linkTransform);
-    std::vector<geometry_msgs::Pose> computePointsOnSphere(int numPoints, geometry_msgs::Point point, geometry_msgs::Point reference_position, double theta_distance, double phi_distance);
+    std::vector<geometry_msgs::Pose> computePointsOnSphere(int numPoints, geometry_msgs::Point point, geometry_msgs::Point reference_position, double extent, double theta_distance, double phi_distance);
     bool isStateValid(moveit::core::RobotState *arm_state, const moveit::core::JointModelGroup *group, const double *joint_group_variable_values);
-    bool computeLookPose(moveit::core::RobotState &arm_state, geometry_msgs::Pose lookPose, geometry_msgs::Pose focus_position, int numPoints, double theta, double phi);
+    bool computeLookPose(moveit::core::RobotState &arm_state, geometry_msgs::Pose lookPose, geometry_msgs::Pose focus_position, int numPoints, double extent, double theta, double phi);
 };
 
 #endif
