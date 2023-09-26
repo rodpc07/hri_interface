@@ -170,6 +170,8 @@ void HRI_Interface::exagerateTrajectory(moveit::planning_interface::MoveGroupInt
 
 bool HRI_Interface::waving(std::string target_frame)
 {
+    ROS_INFO("Attempting \"Waving\"");
+
     geometry_msgs::TransformStamped targetTransform;
 
     // Get transform from human position in reference to base_link
@@ -282,6 +284,9 @@ bool HRI_Interface::waving(std::string target_frame)
 
 bool HRI_Interface::comeClose(std::string target_frame)
 {
+
+    ROS_INFO("Attempting \"Come Close\"");
+
     geometry_msgs::TransformStamped targetTransform;
 
     // Get transform from human position in reference to base_link
@@ -372,6 +377,9 @@ bool HRI_Interface::comeClose(std::string target_frame)
 
 bool HRI_Interface::goAway(std::string target_frame)
 {
+
+    ROS_INFO("Attempting \"Go Away\"");
+
     geometry_msgs::TransformStamped targetTransform;
 
     // Get transform from human position in reference to base_link
@@ -462,6 +470,10 @@ bool HRI_Interface::goAway(std::string target_frame)
 
 bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
 {
+    if (mode)
+        ROS_INFO("Attempting \"Screwing\"");
+    else
+        ROS_INFO("Attempting \"Unscrewing\"");
 
     arm_mgi_->setStartStateToCurrentState();
 
@@ -548,7 +560,7 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
             waypoints.push_back(goal_end_effector_pose);
         }
 
-        const double jump_threshold = 4.5;
+        const double jump_threshold = 5;
         const double eef_step = 0.05;
         fraction = arm_mgi_->computeCartesianPath(waypoints, eef_step, jump_threshold, trajectory);
 
@@ -587,6 +599,9 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
 
 void HRI_Interface::signalPick()
 {
+
+    ROS_INFO("Attempting \"Picking\"");
+
     std::vector<moveit::planning_interface::MoveGroupInterface::Plan> planList;
     gripper_mgi_->setStartStateToCurrentState();
 
@@ -605,6 +620,9 @@ void HRI_Interface::signalPick()
 
 bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotationInfo)
 {
+
+    ROS_INFO("Attempting \"Rotating\"");
+
     visual_tools_->deleteAllMarkers();
 
     // Obtain object from scene
@@ -770,6 +788,9 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
 
 bool HRI_Interface::pointToPoint(geometry_msgs::Point point)
 {
+
+    ROS_INFO("Attempting \"Pointing To Point\"");
+
     visual_tools_->deleteAllMarkers();
 
     arm_mgi_->setStartStateToCurrentState();
@@ -840,6 +861,9 @@ bool HRI_Interface::pointToPoint(geometry_msgs::Point point)
 
 bool HRI_Interface::pointToObject(std::string object_id)
 {
+
+    ROS_INFO("Attempting \"Pointing To Object\"");
+
     visual_tools_->deleteAllMarkers();
 
     // Obtain object from scene
@@ -921,6 +945,7 @@ bool HRI_Interface::pointToObject(std::string object_id)
 
 bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sideInfo)
 {
+    ROS_INFO("Attempting \"Pointing To Object Side\"");
 
     visual_tools_->deleteAllMarkers();
 
@@ -1009,6 +1034,8 @@ bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sid
 
 bool HRI_Interface::pointToHuman(std::string target_frame)
 {
+    ROS_INFO("Attempting \"Pointing To Human\"");
+
     visual_tools_->deleteAllMarkers();
 
     // Calculate New Pose Looking at Human
@@ -1085,6 +1112,92 @@ bool HRI_Interface::pointToHuman(std::string target_frame)
     gripper_mgi_->move();
     arm_mgi_->execute(plan);
     return true;
+}
+
+std::vector<geometry_msgs::Pose> HRI_Interface::testPose(rviz_visual_tools::colors color)
+{
+
+    tf2::Quaternion q1(tf2::Vector3(0, 1, 0), M_PI_2);
+    tf2::Quaternion q2(tf2::Vector3(1, 0, 0), M_PI_2);
+    tf2::Quaternion q3(tf2::Vector3(1, 0, 0), M_PI);
+    tf2::Quaternion q4(tf2::Vector3(1, 0, 0), -M_PI_2);
+    tf2::Quaternion q5(tf2::Vector3(0, 1, 0), M_PI);
+
+    std::vector<geometry_msgs::Quaternion> q_vector;
+
+    geometry_msgs::Quaternion q_msg;
+
+    tf2::convert(q1, q_msg);
+    q_vector.push_back(q_msg);
+
+    tf2::Quaternion qresult;
+
+    qresult = q1 * q2;
+    qresult.normalize();
+    tf2::convert(qresult, q_msg);
+    q_vector.push_back(q_msg);
+
+    qresult = q1 * q3;
+    qresult.normalize();
+    tf2::convert(qresult, q_msg);
+    q_vector.push_back(q_msg);
+
+    qresult = q1 * q4;
+    qresult.normalize();
+    tf2::convert(qresult, q_msg);
+    q_vector.push_back(q_msg);
+
+    qresult = q5;
+    tf2::convert(qresult, q_msg);
+    q_vector.push_back(q_msg);
+
+    arm_mgi_->setStartStateToCurrentState();
+
+    std::vector<geometry_msgs::Pose> range_points;
+
+    double precision = 0.05;
+
+    bool sucess = false;
+
+    for (double z = -0.05; z < 0.35; z += 0.05)
+    {
+        for (double x = -0.1; x < 0.6; x += precision)
+        {
+            for (double y = -0.50; y < 0.50; y += precision)
+            {
+                geometry_msgs::Pose pose;
+                for (const auto q_value : q_vector)
+                {
+                    pose.position.x = x;
+                    pose.position.y = y;
+                    pose.position.z = z;
+                    pose.orientation = q_value;
+
+                    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
+
+                    if (arm_state.setFromIK(arm_jmg_, pose, 0.02, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
+                    {
+                        sucess = true;
+                        range_points.push_back(pose);
+                        visual_tools_->publishSphere(pose, color, 0.025);
+                        visual_tools_->trigger();
+                        visual_tools_->publishRobotState(arm_state, rviz_visual_tools::GREEN);
+                        visual_tools_->trigger();
+                    }
+                }
+
+                if (!sucess)
+                {
+                    visual_tools_->publishSphere(pose, rviz_visual_tools::RED, 0.015);
+                    visual_tools_->trigger();
+                }
+
+                sucess = false;
+            }
+        }
+    }
+
+    return range_points;
 }
 
 // HELPER FUNCTIONS
@@ -1232,7 +1345,8 @@ bool HRI_Interface::isStateValid(moveit::core::RobotState *arm_state, const move
     arm_state->setJointGroupPositions(group, joint_group_variable_values);
     arm_state->update();
 
-    visual_tools_->publishRobotState(*arm_state, rviz_visual_tools::GREEN);
+    // visual_tools_->publishRobotState(*arm_state, rviz_visual_tools::GREEN);
+    // visual_tools_->trigger();
 
     collision_detection::CollisionRequest collision_request;
     collision_request.contacts = false;

@@ -42,6 +42,8 @@ public:
     bool pointToObjectSide(std::string object_id, Eigen::Vector3d sideInfo);
     bool pointToHuman(std::string target_frame);
 
+    std::vector<geometry_msgs::Pose> testPose(rviz_visual_tools::colors color);
+
 private:
     ros::NodeHandle n_;
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> arm_mgi_;
