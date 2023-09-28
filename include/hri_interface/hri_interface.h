@@ -43,6 +43,8 @@ public:
     bool pointToHuman(std::string target_frame);
 
     std::vector<geometry_msgs::Pose> testPose(rviz_visual_tools::colors color);
+    std::vector<geometry_msgs::Pose> testPose2(rviz_visual_tools::colors color);
+
 
 private:
     ros::NodeHandle n_;

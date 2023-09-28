@@ -1161,7 +1161,7 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose(rviz_visual_tools::colo
 
     for (double z = -0.05; z < 0.35; z += 0.05)
     {
-        for (double x = -0.1; x < 0.6; x += precision)
+        for (double x = -0.1; x < 0.85; x += precision)
         {
             for (double y = -0.50; y < 0.50; y += precision)
             {
@@ -1175,7 +1175,7 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose(rviz_visual_tools::colo
 
                     moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
 
-                    if (arm_state.setFromIK(arm_jmg_, pose, 0.02, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
+                    if (arm_state.setFromIK(arm_jmg_, pose, 0.005, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
                     {
                         sucess = true;
                         range_points.push_back(pose);
@@ -1195,6 +1195,94 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose(rviz_visual_tools::colo
                 sucess = false;
             }
         }
+    }
+
+    return range_points;
+}
+
+std::vector<geometry_msgs::Pose> HRI_Interface::testPose2(rviz_visual_tools::colors color)
+{
+
+    tf2::Quaternion q1(tf2::Vector3(0, 1, 0), M_PI_2);
+    tf2::Quaternion q2(tf2::Vector3(1, 0, 0), M_PI_2);
+    tf2::Quaternion q3(tf2::Vector3(1, 0, 0), M_PI);
+    tf2::Quaternion q4(tf2::Vector3(1, 0, 0), -M_PI_2);
+    tf2::Quaternion q5(tf2::Vector3(0, 1, 0), M_PI);
+
+    std::vector<geometry_msgs::Quaternion> q_vector;
+
+    geometry_msgs::Quaternion q_msg;
+
+    tf2::convert(q1, q_msg);
+    q_vector.push_back(q_msg);
+
+    tf2::Quaternion qresult;
+
+    qresult = q1 * q2;
+    qresult.normalize();
+    tf2::convert(qresult, q_msg);
+    q_vector.push_back(q_msg);
+
+    qresult = q1 * q3;
+    qresult.normalize();
+    tf2::convert(qresult, q_msg);
+    q_vector.push_back(q_msg);
+
+    qresult = q1 * q4;
+    qresult.normalize();
+    tf2::convert(qresult, q_msg);
+    q_vector.push_back(q_msg);
+
+    qresult = q5;
+    tf2::convert(qresult, q_msg);
+    q_vector.push_back(q_msg);
+
+    arm_mgi_->setStartStateToCurrentState();
+
+    std::vector<geometry_msgs::Pose> range_points;
+
+    double precision = 0.05;
+
+    bool sucess = false;
+
+    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
+
+    Eigen::Isometry3d pos = arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().at(1));
+
+    geometry_msgs::Point ref_point;
+    ref_point.x = pos.translation().x();
+    ref_point.y = pos.translation().y();
+    ref_point.z = pos.translation().z();
+
+    geometry_msgs::Point point = ref_point;
+    point.x += 0.5;
+
+    std::vector<geometry_msgs::Pose> poses = computePointsOnSphere(15, point, ref_point, 0.2, 2 * M_PI, 2 * M_PI);
+
+    for (auto pose : poses)
+    {
+        for (const auto q_value : q_vector)
+        {
+            pose.orientation = q_value;
+
+            if (arm_state.setFromIK(arm_jmg_, pose, 0.005, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
+            {
+                sucess = true;
+                range_points.push_back(pose);
+                visual_tools_->publishSphere(pose, color, 0.025);
+                visual_tools_->trigger();
+                visual_tools_->publishRobotState(arm_state, rviz_visual_tools::GREEN);
+                visual_tools_->trigger();
+            }
+        }
+
+        if (!sucess)
+        {
+            visual_tools_->publishSphere(pose, rviz_visual_tools::RED, 0.015);
+            visual_tools_->trigger();
+        }
+
+        sucess = false;
     }
 
     return range_points;
@@ -1322,11 +1410,11 @@ std::vector<geometry_msgs::Pose> HRI_Interface::computePointsOnSphere(int numPoi
 
                 poses.push_back(newPoint);
 
-                visual_tools_->publishAxis(newPoint);
+                // visual_tools_->publishAxis(newPoint);
             }
         }
-        visual_tools_->trigger();
-        visual_tools_->prompt("");
+        // visual_tools_->trigger();
+        // visual_tools_->prompt("");
     }
 
     std::sort(poses.begin(), poses.end(), [&point](const geometry_msgs::Pose &p1, const geometry_msgs::Pose &p2)
