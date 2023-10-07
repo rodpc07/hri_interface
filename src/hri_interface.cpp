@@ -499,7 +499,7 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
 
     moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
 
-    if (!computeLookPose(arm_state, initial_pose, input_pose, 20, 0.2, 0.5, 0.5))
+    if (!computeLookPose(arm_state, initial_pose, input_pose, 20, 0.2, 5, 0.5, 0.5))
     {
         return false;
     }
@@ -701,7 +701,7 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
         visual_tools_->publishAxis(lookPose);
         visual_tools_->trigger();
 
-        if (computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 1.0, 1.0))
+        if (computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 5, 1.0, 1.0))
         {
             sucess_pose = true;
             break;
@@ -779,6 +779,7 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
         return false;
     }
 
+    gripper_mgi_->execute(openPlan);
     arm_mgi_->execute(first_movement);
     arm_mgi_->execute(first_rotation);
     arm_mgi_->execute(second_rotation);
@@ -838,7 +839,7 @@ bool HRI_Interface::pointToPoint(geometry_msgs::Point point)
     pointPose.position = point;
     pointPose.orientation.w = 1.0;
 
-    if (!computeLookPose(arm_state, lookPose, pointPose, 10, 0.2, 2.0, 2.0))
+    if (!computeLookPose(arm_state, lookPose, pointPose, 10, 0.2, 5, 2.0, 2.0))
     {
         return false;
     }
@@ -923,7 +924,7 @@ bool HRI_Interface::pointToObject(std::string object_id)
 
     visual_tools_->prompt("");
 
-    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 2.0, 2.0))
+    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 5, 2.0, 2.0))
     {
         return false;
     }
@@ -937,9 +938,11 @@ bool HRI_Interface::pointToObject(std::string object_id)
         ROS_ERROR("Can't plan for pointing movement");
         return false;
     }
+
     gripper_mgi_->setNamedTarget("close");
     gripper_mgi_->move();
     arm_mgi_->execute(plan);
+
     return true;
 }
 
@@ -1011,7 +1014,7 @@ bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sid
     arm_mgi_->setStartStateToCurrentState();
     moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
 
-    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 0.75, 0.75))
+    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 5, 0.75, 0.75))
     {
         return false;
     }
@@ -1027,6 +1030,9 @@ bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sid
         ROS_ERROR("Can't plan for pointing movement");
         return false;
     }
+
+    gripper_mgi_->setNamedTarget("close");
+    gripper_mgi_->move();
     arm_mgi_->execute(plan);
 
     return true;
@@ -1094,7 +1100,7 @@ bool HRI_Interface::pointToHuman(std::string target_frame)
     humanPose.position.z = targetTransform.transform.translation.z;
     humanPose.orientation.w = 1;
 
-    if (!computeLookPose(arm_state, lookPose, humanPose, 10, 0.2, 2.0, 2.0))
+    if (!computeLookPose(arm_state, lookPose, humanPose, 10, 0.2, 5, 2.0, 2.0))
     {
         return false;
     }
@@ -1108,9 +1114,11 @@ bool HRI_Interface::pointToHuman(std::string target_frame)
         ROS_ERROR("Can't plan for pointing movement");
         return false;
     }
+
     gripper_mgi_->setNamedTarget("close");
     gripper_mgi_->move();
     arm_mgi_->execute(plan);
+
     return true;
 }
 
@@ -1208,6 +1216,7 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose2(rviz_visual_tools::col
     tf2::Quaternion q3(tf2::Vector3(1, 0, 0), M_PI);
     tf2::Quaternion q4(tf2::Vector3(1, 0, 0), -M_PI_2);
     tf2::Quaternion q5(tf2::Vector3(0, 1, 0), M_PI);
+    tf2::Quaternion q6(tf2::Vector3(0, 0, 0), 0);
 
     std::vector<geometry_msgs::Quaternion> q_vector;
 
@@ -1237,6 +1246,10 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose2(rviz_visual_tools::col
     tf2::convert(qresult, q_msg);
     q_vector.push_back(q_msg);
 
+    qresult = q6;
+    tf2::convert(qresult, q_msg);
+    q_vector.push_back(q_msg);
+
     arm_mgi_->setStartStateToCurrentState();
 
     std::vector<geometry_msgs::Pose> range_points;
@@ -1247,7 +1260,12 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose2(rviz_visual_tools::col
 
     moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
 
-    Eigen::Isometry3d pos = arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().at(1));
+    Eigen::Isometry3d pos = arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().at(0));
+
+    // visual_tools_->publishAxisLabeled(pos, arm_mgi_->getLinkNames().at(0), rviz_visual_tools::LARGE);
+    // visual_tools_->trigger();
+
+    std::cout << arm_mgi_->getLinkNames().at(0).c_str() << "\n";
 
     geometry_msgs::Point ref_point;
     ref_point.x = pos.translation().x();
@@ -1255,35 +1273,70 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose2(rviz_visual_tools::col
     ref_point.z = pos.translation().z();
 
     geometry_msgs::Point point = ref_point;
-    point.x += 0.5;
+    point.x += 0.50;
 
-    std::vector<geometry_msgs::Pose> poses = computePointsOnSphere(15, point, ref_point, 0.2, 2 * M_PI, 2 * M_PI);
+    visual_tools_->publishSphere(ref_point, rviz_visual_tools::GREEN);
+    visual_tools_->publishSphere(point, rviz_visual_tools::GREEN);
+    visual_tools_->trigger();
+
+    std::vector<geometry_msgs::Pose> poses = computePointsOnSphere(20, 15, point, ref_point, 0.20, 2 * M_PI, 2 * M_PI);
+
+    for (auto &p : poses)
+    {
+        visual_tools_->publishSphere(p, rviz_visual_tools::RED, 0.01);
+    }
+    visual_tools_->trigger();
 
     for (auto pose : poses)
     {
+        tf2::Quaternion q(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
+
+        tf2::Quaternion q_inverse(tf2::Vector3(0, 1, 0), M_PI);
+
+        q = q * q_inverse;
+        q.normalize();
+
+        tf2::convert(q, pose.orientation);
+
+        if (arm_state.setFromIK(arm_jmg_, pose, 0.005, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
+        {
+            range_points.push_back(pose);
+            visual_tools_->publishSphere(pose, color, 0.025);
+            visual_tools_->publishRobotState(arm_state, rviz_visual_tools::GREEN);
+            visual_tools_->trigger();
+            continue;
+        }
+
         for (const auto q_value : q_vector)
         {
             pose.orientation = q_value;
 
             if (arm_state.setFromIK(arm_jmg_, pose, 0.005, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
             {
-                sucess = true;
                 range_points.push_back(pose);
                 visual_tools_->publishSphere(pose, color, 0.025);
-                visual_tools_->trigger();
                 visual_tools_->publishRobotState(arm_state, rviz_visual_tools::GREEN);
                 visual_tools_->trigger();
+                break;
             }
         }
-
-        if (!sucess)
-        {
-            visual_tools_->publishSphere(pose, rviz_visual_tools::RED, 0.015);
-            visual_tools_->trigger();
-        }
-
-        sucess = false;
     }
+
+    double maxRange = -INFINITY;
+
+    for (auto &point : range_points)
+    {
+
+        double distance = std::sqrt(
+            std::pow(point.position.x - ref_point.x, 2) +
+            std::pow(point.position.y - ref_point.y, 2) +
+            std::pow(point.position.z - ref_point.z, 2));
+
+        if (distance > maxRange)
+            maxRange = distance;
+    }
+
+    ROS_INFO("Max Radius From %s: %f ", arm_mgi_->getLinkNames().at(0).c_str(), maxRange);
 
     return range_points;
 }
@@ -1362,7 +1415,7 @@ std::vector<Eigen::Isometry3d> HRI_Interface::findClosestApproachOption(const st
     return sorted_approach_options;
 }
 
-std::vector<geometry_msgs::Pose> HRI_Interface::computePointsOnSphere(int numPoints, geometry_msgs::Point point, geometry_msgs::Point reference_position, double extent, double theta_distance, double phi_distance)
+std::vector<geometry_msgs::Pose> HRI_Interface::computePointsOnSphere(int numPoints, int num_layers, geometry_msgs::Point point, geometry_msgs::Point reference_position, double extent, double theta_distance, double phi_distance)
 {
     double theta, phi; // Polar and azimuthal angles
 
@@ -1379,7 +1432,10 @@ std::vector<geometry_msgs::Pose> HRI_Interface::computePointsOnSphere(int numPoi
     std::vector<geometry_msgs::Pose> poses;
 
     // Compute points around the given point on the sphere
-    for (double radiusValue = r; radiusValue < r + extent; radiusValue += extent / 5)
+    double radiusValue;
+    int iteration;
+
+    for (radiusValue = r, iteration = 0; radiusValue <= r + extent && iteration < num_layers; radiusValue += extent / num_layers, iteration++)
     {
         for (int i = -numPoints / 2; i < numPoints / 2; ++i)
         {
@@ -1450,11 +1506,11 @@ bool HRI_Interface::isStateValid(moveit::core::RobotState *arm_state, const move
     return !collision_result.collision;
 }
 
-bool HRI_Interface::computeLookPose(moveit::core::RobotState &arm_state, geometry_msgs::Pose lookPose, geometry_msgs::Pose focus_position, int numPoints, double extent, double theta, double phi)
+bool HRI_Interface::computeLookPose(moveit::core::RobotState &arm_state, geometry_msgs::Pose lookPose, geometry_msgs::Pose focus_position, int numPoints, int num_layers, double extent, double theta, double phi)
 {
     if (!arm_state.setFromIK(arm_jmg_, lookPose, 0.1, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
     {
-        std::vector<geometry_msgs::Pose> pose_vector = computePointsOnSphere(numPoints, lookPose.position, focus_position.position, extent, theta, phi);
+        std::vector<geometry_msgs::Pose> pose_vector = computePointsOnSphere(numPoints, num_layers, lookPose.position, focus_position.position, extent, theta, phi);
 
         for (const auto &pose : pose_vector)
         {

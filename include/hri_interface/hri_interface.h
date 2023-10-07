@@ -45,7 +45,6 @@ public:
     std::vector<geometry_msgs::Pose> testPose(rviz_visual_tools::colors color);
     std::vector<geometry_msgs::Pose> testPose2(rviz_visual_tools::colors color);
 
-
 private:
     ros::NodeHandle n_;
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> arm_mgi_;
@@ -68,9 +67,9 @@ private:
     void updatePlanningScene(std::shared_ptr<planning_scene::PlanningScene> planning_scene);
     void prePlanPick();
     std::vector<Eigen::Isometry3d> findClosestApproachOption(const std::vector<Eigen::Isometry3d> &approach_options, const Eigen::Isometry3d &linkTransform);
-    std::vector<geometry_msgs::Pose> computePointsOnSphere(int numPoints, geometry_msgs::Point point, geometry_msgs::Point reference_position, double extent, double theta_distance, double phi_distance);
+    std::vector<geometry_msgs::Pose> computePointsOnSphere(int numPoints, int num_layers, geometry_msgs::Point point, geometry_msgs::Point reference_position, double extent, double theta_distance, double phi_distance);
     bool isStateValid(moveit::core::RobotState *arm_state, const moveit::core::JointModelGroup *group, const double *joint_group_variable_values);
-    bool computeLookPose(moveit::core::RobotState &arm_state, geometry_msgs::Pose lookPose, geometry_msgs::Pose focus_position, int numPoints, double extent, double theta, double phi);
+    bool computeLookPose(moveit::core::RobotState &arm_state, geometry_msgs::Pose lookPose, geometry_msgs::Pose focus_position, int numPoints, int num_layers, double extent, double theta, double phi);
 };
 
 #endif
