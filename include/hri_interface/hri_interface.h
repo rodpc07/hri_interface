@@ -62,13 +62,26 @@ private:
     std::vector<double> closedJointValues;
     std::vector<double> openedJointValues;
 
-    bool transformListener(std::string source_frame, std::string target_frame,
-                           geometry_msgs::TransformStamped &transform_stamped);
+    bool transformListener(std::string source_frame, std::string target_frame, geometry_msgs::TransformStamped &transform_stamped);
     void updatePlanningScene(std::shared_ptr<planning_scene::PlanningScene> planning_scene);
     void prePlanPick();
     std::vector<Eigen::Isometry3d> findClosestApproachOption(const std::vector<Eigen::Isometry3d> &approach_options, const Eigen::Isometry3d &linkTransform);
     std::vector<geometry_msgs::Pose> computePointsOnSphere(int numPoints, int num_layers, geometry_msgs::Point point, geometry_msgs::Point reference_position, double extent, double theta_distance, double phi_distance);
+
     bool isStateValid(moveit::core::RobotState *arm_state, const moveit::core::JointModelGroup *group, const double *joint_group_variable_values);
+
+    /** \brief If the group this state corresponds to is a chain and a solver is available, then the joint values can be
+    set by computing inverse kinematics.
+    The pose is assumed to be in the reference frame of the kinematic model. Returns true on success.
+    @param arm_state ...
+    @param lookPose
+    @param focus_position ...
+    @param numPoints ...
+    @param num_layers ...
+    @param extent ...
+    @param theta ...
+    @param phi ...
+    */
     bool computeLookPose(moveit::core::RobotState &arm_state, geometry_msgs::Pose lookPose, geometry_msgs::Pose focus_position, int numPoints, int num_layers, double extent, double theta, double phi);
 };
 

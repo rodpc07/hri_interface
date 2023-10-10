@@ -478,65 +478,44 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
     arm_mgi_->setStartStateToCurrentState();
 
     double distance = 0.05;
-
     double maxBound = arm_mgi_->getRobotModel()->getVariableBounds(arm_mgi_->getActiveJoints().at(6)).max_position_;
     double minBound = arm_mgi_->getRobotModel()->getVariableBounds(arm_mgi_->getActiveJoints().at(6)).min_position_;
 
-    // Set Initial Position to same as argument or offset
-    geometry_msgs::Pose initial_pose;
-    if (mode)
-    {
-        Eigen::Isometry3d unscrew_inital_eigen;
-        visual_tools_->convertPoseSafe(input_pose, unscrew_inital_eigen);
-        unscrew_inital_eigen.translate(Eigen::Vector3d(0, 0, -distance));
-
-        initial_pose = visual_tools_->convertPose(unscrew_inital_eigen);
-    }
-    else
-    {
-        initial_pose = input_pose;
-    }
-
     moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
 
-    if (!computeLookPose(arm_state, initial_pose, input_pose, 20, 0.2, 5, 0.5, 0.5))
+    Eigen::Isometry3d ref_eigen;
+    visual_tools_->convertPoseSafe(input_pose, ref_eigen);
+    ref_eigen.translate(Eigen::Vector3d(0, 0, 0.14));
+
+    auto ref_pose = visual_tools_->convertPose(ref_eigen);
+
+    if (!computeLookPose(arm_state, input_pose, ref_pose, 5, 5, 0.1, 0.75, 0.75))
     {
+        ROS_ERROR("The arm can't find a suitable pose");
         return false;
     }
 
-    std::vector<double> joint_group_positions;
-    arm_state.copyJointGroupPositions(arm_jmg_, joint_group_positions);
+    std::vector<double> unscrew_joint_group_positions;
+    arm_state.copyJointGroupPositions(arm_jmg_, unscrew_joint_group_positions);
 
     // Set gripper joint to limit to allow a full range of rotation
 
-    joint_group_positions.back() = mode ? minBound : maxBound;
-    arm_mgi_->setJointValueTarget(joint_group_positions);
-
-    moveit::planning_interface::MoveGroupInterface::Plan planSetInitialPosition;
-
-    if (!(arm_mgi_->plan(planSetInitialPosition) == moveit::core::MoveItErrorCode::SUCCESS))
-    {
-        ROS_ERROR("Can't plan for initial position");
-        return false;
-    }
-
-    arm_state.setJointGroupPositions(arm_jmg_, planSetInitialPosition.trajectory_.joint_trajectory.points.back().positions);
-    arm_mgi_->setStartState(arm_state);
+    unscrew_joint_group_positions.back() = maxBound;
+    arm_state.setJointGroupPositions(arm_jmg_, unscrew_joint_group_positions);
 
     // Perform action of EndEffector
     geometry_msgs::Pose start_end_effector_pose = visual_tools_->convertPose(arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().back()));
     Eigen::Isometry3d goal_end_effector_eigen;
 
-    double turn_angle = mode ? M_PI_2 : -M_PI_2;
-    int distance_ratio = 6;
-    Eigen::Vector3d translation(0, 0, mode ? distance / distance_ratio : -distance / distance_ratio);
+    double turn_angle = -M_PI_4;
+    int distance_ratio = (maxBound - minBound) / abs(turn_angle);
+    Eigen::Vector3d translation(0, 0, -distance / distance_ratio);
 
     double fraction;
     moveit_msgs::RobotTrajectory trajectory;
 
     for (int attempt = 0; fraction < 0.8 && attempt < 5; attempt++)
     {
-
         geometry_msgs::Pose goal_end_effector_pose = start_end_effector_pose;
         std::vector<geometry_msgs::Pose> waypoints;
 
@@ -560,15 +539,41 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
             waypoints.push_back(goal_end_effector_pose);
         }
 
-        const double jump_threshold = 5;
+        arm_mgi_->setStartState(arm_state);
+
+        if (mode)
+        {
+            ROS_INFO("REVERSE VECTOR");
+            std::reverse(waypoints.begin(), waypoints.end());
+
+            arm_state.setFromIK(arm_jmg_, waypoints.at(0), 0.1);
+
+            std::vector<double> screw_joint_group_positions;
+            arm_state.copyJointGroupPositions(arm_jmg_, screw_joint_group_positions);
+
+            // Set gripper joint to limit to allow a full range of rotation
+
+            screw_joint_group_positions.back() = minBound;
+            arm_state.setJointGroupPositions(arm_jmg_, screw_joint_group_positions);
+
+            arm_mgi_->setStartState(arm_state);
+        }
+        else
+        {
+            arm_state.setJointGroupPositions(arm_jmg_, unscrew_joint_group_positions);
+            arm_mgi_->setStartState(arm_state);
+        }
+
+        const double jump_threshold = 4;
         const double eef_step = 0.05;
+
         fraction = arm_mgi_->computeCartesianPath(waypoints, eef_step, jump_threshold, trajectory);
 
         visual_tools_->deleteAllMarkers();
 
-        // for (std::size_t i = 0; i < waypoints.size(); ++i)
-        //     visual_tools_->publishAxis(waypoints[i]);
-        // visual_tools_->trigger();
+        for (std::size_t i = 0; i < waypoints.size(); ++i)
+            visual_tools_->publishAxis(waypoints[i]);
+        visual_tools_->trigger();
 
         if (fraction < 0.8 && attempt < 5)
         {
@@ -587,10 +592,19 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
     }
 
     arm_mgi_->setStartStateToCurrentState();
+
+    moveit::planning_interface::MoveGroupInterface::Plan planSetInitialPosition;
+    arm_mgi_->setJointValueTarget(trajectory.joint_trajectory.points.at(0).positions);
+
+    if (!(arm_mgi_->plan(planSetInitialPosition) == moveit::core::MoveItErrorCode::SUCCESS))
+    {
+        ROS_ERROR("Can't plan for initial position");
+        return false;
+    }
+
     gripper_mgi_->setNamedTarget("close");
     gripper_mgi_->move();
     arm_mgi_->execute(planSetInitialPosition);
-    visual_tools_->prompt("");
     arm_mgi_->execute(trajectory);
     visual_tools_->deleteAllMarkers();
 
@@ -701,7 +715,7 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
         visual_tools_->publishAxis(lookPose);
         visual_tools_->trigger();
 
-        if (computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 5, 1.0, 1.0))
+        if (computeLookPose(arm_state, lookPose, object_pose, 10, 5, 0.2, 1.0, 1.0))
         {
             sucess_pose = true;
             break;
@@ -839,7 +853,7 @@ bool HRI_Interface::pointToPoint(geometry_msgs::Point point)
     pointPose.position = point;
     pointPose.orientation.w = 1.0;
 
-    if (!computeLookPose(arm_state, lookPose, pointPose, 10, 0.2, 5, 2.0, 2.0))
+    if (!computeLookPose(arm_state, lookPose, pointPose, 10, 5, 0.2, 2.0, 2.0))
     {
         return false;
     }
@@ -924,7 +938,7 @@ bool HRI_Interface::pointToObject(std::string object_id)
 
     visual_tools_->prompt("");
 
-    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 5, 2.0, 2.0))
+    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 5, 0.2, 2.0, 2.0))
     {
         return false;
     }
@@ -1014,7 +1028,7 @@ bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sid
     arm_mgi_->setStartStateToCurrentState();
     moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
 
-    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 0.2, 5, 0.75, 0.75))
+    if (!computeLookPose(arm_state, lookPose, object_pose, 10, 5, 0.2, 0.75, 0.75))
     {
         return false;
     }
@@ -1100,7 +1114,7 @@ bool HRI_Interface::pointToHuman(std::string target_frame)
     humanPose.position.z = targetTransform.transform.translation.z;
     humanPose.orientation.w = 1;
 
-    if (!computeLookPose(arm_state, lookPose, humanPose, 10, 0.2, 5, 2.0, 2.0))
+    if (!computeLookPose(arm_state, lookPose, humanPose, 10, 5, 0.2, 2.0, 2.0))
     {
         return false;
     }
