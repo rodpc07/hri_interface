@@ -45,6 +45,8 @@ public:
     std::vector<geometry_msgs::Pose> testPose(rviz_visual_tools::colors color);
     std::vector<geometry_msgs::Pose> testPose2(rviz_visual_tools::colors color);
 
+    bool demonstratepointToObject(std::string object_id);
+
 private:
     ros::NodeHandle n_;
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> arm_mgi_;

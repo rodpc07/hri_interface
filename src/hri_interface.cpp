@@ -1355,6 +1355,78 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose2(rviz_visual_tools::col
     return range_points;
 }
 
+bool HRI_Interface::demonstratepointToObject(std::string object_id)
+{
+
+    ROS_INFO("Attempting \"Pointing To Object\"");
+
+    visual_tools_->deleteAllMarkers();
+
+    // Obtain object from scene
+    std::map<std::string, moveit_msgs::CollisionObject> objects = planning_scene_interface_->getObjects();
+
+    // Find position of object
+    moveit_msgs::CollisionObject object = objects[object_id];
+    geometry_msgs::Pose object_pose = object.pose;
+
+    double radius = sqrt(pow(object.primitives[0].dimensions[0], 2) + pow(object.primitives[0].dimensions[1], 2) + pow(object.primitives[0].dimensions[2], 2));
+    visual_tools_->publishSphere(object_pose, rviz_visual_tools::PINK, radius);
+
+    // Create a vector from shoulder to object to calculate pose
+
+    arm_mgi_->setStartStateToCurrentState();
+    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
+
+    Eigen::Isometry3d linkTransform = arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().at(0));
+
+    double xTarget = object_pose.position.x - linkTransform.translation().x();
+    double yTarget = object_pose.position.y - linkTransform.translation().y();
+    double zTarget = object_pose.position.z - linkTransform.translation().z();
+
+    double distance = sqrt(pow(xTarget, 2) + pow(yTarget, 2) + pow(zTarget, 2));
+
+    double targetDistance = distance - radius - 0.15 >= 0.6 ? 0.6 : distance - radius - 0.15;
+
+    double scalingFactor = (targetDistance) / distance;
+
+    xTarget *= scalingFactor;
+    yTarget *= scalingFactor;
+    zTarget *= scalingFactor;
+
+    double sideAngle = atan2(yTarget, xTarget);
+    double tiltAngle = M_PI_2 - atan2(zTarget, sqrt(pow(xTarget, 2) + pow(yTarget, 2)));
+
+    tf2::Quaternion q1(tf2::Vector3(0, 0, 1), sideAngle);
+    tf2::Quaternion q2(tf2::Vector3(0, 1, 0), tiltAngle);
+    tf2::Quaternion qresult = q1 * q2;
+    qresult.normalize();
+
+    geometry_msgs::Quaternion q_msg;
+    tf2::convert(qresult, q_msg);
+
+    geometry_msgs::Pose lookPose;
+    lookPose.position.x = linkTransform.translation().x() + xTarget;
+    lookPose.position.y = linkTransform.translation().y() + yTarget;
+    lookPose.position.z = linkTransform.translation().z() + zTarget;
+    lookPose.orientation = q_msg;
+
+    visual_tools_->publishAxis(lookPose);
+    visual_tools_->trigger();
+
+    visual_tools_->prompt("");
+
+    std::vector<geometry_msgs::Pose> points = computePointsOnSphere(10, 5, lookPose.position, object_pose.position, 0.2, 2.0, 2.0);
+
+    for (auto &p : points)
+    {
+        visual_tools_->publishAxis(p);
+    }
+    visual_tools_->trigger();
+    visual_tools_->prompt("");
+
+    return true;
+}
+
 // HELPER FUNCTIONS
 
 bool HRI_Interface::transformListener(std::string source_frame, std::string target_frame, geometry_msgs::TransformStamped &transform_stamped)
