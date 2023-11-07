@@ -793,10 +793,15 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
         return false;
     }
 
-    gripper_mgi_->execute(openPlan);
+    gripper_mgi_->setNamedTarget("open");
+    gripper_mgi_->move();
     arm_mgi_->execute(first_movement);
+    gripper_mgi_->setNamedTarget("close");
+    gripper_mgi_->move();
     arm_mgi_->execute(first_rotation);
     arm_mgi_->execute(second_rotation);
+    gripper_mgi_->setNamedTarget("open");
+    gripper_mgi_->move();
 
     return true;
 }
