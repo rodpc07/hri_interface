@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <Eigen/Geometry>
 
+#include <moveit/collision_detection/collision_tools.h>
+
 HRI_Interface::HRI_Interface(ros::NodeHandle n,
                              std::shared_ptr<moveit::planning_interface::MoveGroupInterface> arm_mgi,
                              const moveit::core::JointModelGroup *arm_jmg,
@@ -1591,6 +1593,53 @@ bool HRI_Interface::isStateValid(moveit::core::RobotState *arm_state, const move
     collision_result.clear();
     planning_scene_->getCurrentStateNonConst() = *arm_state;
     planning_scene_->checkCollision(collision_request, collision_result);
+
+    // ros::Publisher *g_marker_array_publisher = nullptr;
+    // visualization_msgs::MarkerArray g_collision_points;
+
+    // g_marker_array_publisher =
+    //     new ros::Publisher(n_.advertise<visualization_msgs::MarkerArray>("interactive_robot_marray", 100));
+
+    // if (collision_result.collision)
+    // {
+    //     for (auto &collision_point : collision_result.contacts)
+    //     {
+    //         ROS_INFO(collision_point.first.first.c_str());
+    //         ROS_INFO(collision_point.first.second.c_str());
+    //     }
+
+    //     ROS_INFO_STREAM("COLLIDING contact_point_count: " << collision_result.contact_count);
+    //     if (collision_result.contact_count > 0)
+    //     {
+    //         std_msgs::ColorRGBA color;
+    //         color.r = 1.0;
+    //         color.g = 0.0;
+    //         color.b = 1.0;
+    //         color.a = 1.0;
+    //         visualization_msgs::MarkerArray markers;
+
+    //         /* Get the contact points and display them as markers */
+    //         collision_detection::getCollisionMarkersFromContacts(markers, "yumi_base_link", collision_result.contacts, color,
+    //                                                              ros::Duration(), // remain until deleted
+    //                                                              0.01);           // radius
+    //         if (!g_collision_points.markers.empty())
+    //         {
+    //             for (auto &marker : g_collision_points.markers)
+    //                 marker.action = visualization_msgs::Marker::DELETE;
+
+    //             g_marker_array_publisher->publish(g_collision_points);
+    //         }
+
+    //         // move new markers into g_collision_points
+    //         std::swap(g_collision_points.markers, markers.markers);
+
+    //         // draw new markers (if there are any)
+    //         if (!g_collision_points.markers.empty())
+    //             g_marker_array_publisher->publish(g_collision_points);
+    //     }
+    // }
+
+    // visual_tools_->prompt("");
 
     ROS_INFO_STREAM("COLLISION RESULT is " << ((!collision_result.collision) ? "valid" : "not valid"));
 
