@@ -35,6 +35,10 @@ public:
     bool goAway(std::string target_frame);
     /* bool mode (true = screw, false = unscrew) */
     bool screw_unscrew(bool mode, geometry_msgs::Pose input_pose);
+
+    /* doesnt work*/
+    bool screw_unscrew_constrains(geometry_msgs::Pose input_pose);
+
     void signalPick();
     bool signalRotate(std::string object_id, Eigen::Vector3d rotationInfo);
     bool pointToPoint(geometry_msgs::Point point);
@@ -85,6 +89,7 @@ private:
     @param phi ...
     */
     bool computeLookPose(moveit::core::RobotState &arm_state, geometry_msgs::Pose lookPose, geometry_msgs::Pose focus_position, int numPoints, int num_layers, double extent, double theta, double phi);
+    double objectBoundingRadius(moveit_msgs::CollisionObject object);
 };
 
 #endif

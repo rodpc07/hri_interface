@@ -16,6 +16,11 @@
 #include <functional>
 #include <algorithm>
 #include <Eigen/Geometry>
+#include <moveit/kinematic_constraints/utils.h>
+#include <moveit/kinematics_base/kinematics_base.h>
+
+#include <geometric_shapes/shape_operations.h>
+#include <geometric_shapes/mesh_operations.h>
 
 #include <moveit/collision_detection/collision_tools.h>
 
@@ -95,8 +100,8 @@ void HRI_Interface::exagerateTrajectory(moveit::planning_interface::MoveGroupInt
             target_pose.translate(xyz_max * scale);
             target_pose.linear() = current_end_effector_state.rotation();
 
-            visual_tools_->publishAxisLabeled(target_pose, "Pose");
-            visual_tools_->trigger();
+            // visual_tools_->publishAxisLabeled(target_pose, "Pose");
+            // visual_tools_->trigger();
 
             kinematic_state->setJointGroupPositions(arm_jmg_, previous_joint_values);
             success_IK = kinematic_state->setFromIK(arm_jmg_, target_pose);
@@ -105,8 +110,6 @@ void HRI_Interface::exagerateTrajectory(moveit::planning_interface::MoveGroupInt
             tmp << i;
             char const *iteration = tmp.str().c_str();
             ROS_INFO_NAMED("First Loop", "Iteration %s", success_IK ? iteration : "FAILED");
-
-            visual_tools_->prompt("Press 'next' in the RvizVisualToolsGui window to continue the demo");
 
             if (!success_IK)
             {
@@ -118,7 +121,7 @@ void HRI_Interface::exagerateTrajectory(moveit::planning_interface::MoveGroupInt
         }
     } while (!success_IK);
 
-    visual_tools_->deleteAllMarkers();
+    // visual_tools_->deleteAllMarkers();
 
     for (int i = 0; i < num_waypoints; i++)
     {
@@ -149,8 +152,8 @@ void HRI_Interface::exagerateTrajectory(moveit::planning_interface::MoveGroupInt
         target_pose.translate(xyz_max * scale);
         target_pose.linear() = current_end_effector_state.rotation();
 
-        visual_tools_->publishAxisLabeled(target_pose, "Pose");
-        visual_tools_->trigger();
+        // visual_tools_->publishAxisLabeled(target_pose, "Pose");
+        // visual_tools_->trigger();
 
         kinematic_state->setJointGroupPositions(arm_jmg_, previous_joint_values);
         success_IK = kinematic_state->setFromIK(arm_jmg_, target_pose);
@@ -159,8 +162,6 @@ void HRI_Interface::exagerateTrajectory(moveit::planning_interface::MoveGroupInt
         tmp << i;
         char const *iteration = tmp.str().c_str();
         ROS_INFO_NAMED("tutorial", "Iteration %s", success_IK ? iteration : "FAILED");
-
-        visual_tools_->prompt("Press 'next' in the RvizVisualToolsGui window to continue the demo");
 
         kinematic_state->copyJointGroupPositions(arm_jmg_, plan.trajectory_.joint_trajectory.points.at(i).positions);
 
@@ -477,47 +478,49 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
     else
         ROS_INFO("Attempting \"Unscrewing\"");
 
-    arm_mgi_->setStartStateToCurrentState();
-
-    double distance = 0.05;
+    double distance = 0.10;
     double maxBound = arm_mgi_->getRobotModel()->getVariableBounds(arm_mgi_->getActiveJoints().at(6)).max_position_;
     double minBound = arm_mgi_->getRobotModel()->getVariableBounds(arm_mgi_->getActiveJoints().at(6)).min_position_;
 
-    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
-
     Eigen::Isometry3d ref_eigen;
     visual_tools_->convertPoseSafe(input_pose, ref_eigen);
-    ref_eigen.translate(Eigen::Vector3d(0, 0, 0.14));
+    ref_eigen.translate(Eigen::Vector3d(0, 0, 0.14)); // 0.14 length of the gripper
 
-    auto ref_pose = visual_tools_->convertPose(ref_eigen);
-
-    if (!computeLookPose(arm_state, input_pose, ref_pose, 5, 5, 0.1, 0.75, 0.75))
-    {
-        ROS_ERROR("The arm can't find a suitable pose");
-        return false;
-    }
-
-    std::vector<double> unscrew_joint_group_positions;
-    arm_state.copyJointGroupPositions(arm_jmg_, unscrew_joint_group_positions);
-
-    // Set gripper joint to limit to allow a full range of rotation
-
-    unscrew_joint_group_positions.back() = maxBound;
-    arm_state.setJointGroupPositions(arm_jmg_, unscrew_joint_group_positions);
-
-    // Perform action of EndEffector
-    geometry_msgs::Pose start_end_effector_pose = visual_tools_->convertPose(arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().back()));
-    Eigen::Isometry3d goal_end_effector_eigen;
+    auto reference_pose = visual_tools_->convertPose(ref_eigen);
 
     double turn_angle = -M_PI_4;
     int distance_ratio = (maxBound - minBound) / abs(turn_angle);
     Eigen::Vector3d translation(0, 0, -distance / distance_ratio);
 
     double fraction;
+    int max_attempts = 10;
     moveit_msgs::RobotTrajectory trajectory;
 
-    for (int attempt = 0; fraction < 0.8 && attempt < 5; attempt++)
+    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
+
+    for (int attempt = 0; fraction < 0.8 && attempt < max_attempts; attempt++)
     {
+
+        arm_state.setJointGroupPositions(arm_jmg_, arm_mgi_->getRandomJointValues());
+
+        if (!computeLookPose(arm_state, input_pose, reference_pose, 5, 5, 0.1, 0.75, 0.75))
+        {
+            ROS_ERROR("The arm can't find a suitable pose");
+            // return false;
+        }
+
+        std::vector<double> unscrew_joint_group_positions;
+        arm_state.copyJointGroupPositions(arm_jmg_, unscrew_joint_group_positions);
+
+        // Set gripper joint to limit to allow a full range of rotation
+
+        unscrew_joint_group_positions.back() = maxBound;
+        arm_state.setJointGroupPositions(arm_jmg_, unscrew_joint_group_positions);
+
+        // Perform action of EndEffector
+        geometry_msgs::Pose start_end_effector_pose = visual_tools_->convertPose(arm_state.getGlobalLinkTransform(arm_mgi_->getLinkNames().back()));
+        Eigen::Isometry3d goal_end_effector_eigen;
+
         geometry_msgs::Pose goal_end_effector_pose = start_end_effector_pose;
         std::vector<geometry_msgs::Pose> waypoints;
 
@@ -541,14 +544,18 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
             waypoints.push_back(goal_end_effector_pose);
         }
 
-        arm_mgi_->setStartState(arm_state);
-
         if (mode)
         {
             ROS_INFO("REVERSE VECTOR");
             std::reverse(waypoints.begin(), waypoints.end());
 
-            arm_state.setFromIK(arm_jmg_, waypoints.at(0), 0.1);
+            arm_state.setJointGroupPositions(arm_jmg_, arm_mgi_->getRandomJointValues());
+
+            if (!computeLookPose(arm_state, waypoints.at(0), reference_pose, 5, 5, 0.1, 0.75, 0.75))
+            {
+                ROS_ERROR("The arm can't find a suitable pose");
+                // return false;
+            }
 
             std::vector<double> screw_joint_group_positions;
             arm_state.copyJointGroupPositions(arm_jmg_, screw_joint_group_positions);
@@ -566,27 +573,21 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
             arm_mgi_->setStartState(arm_state);
         }
 
-        const double jump_threshold = 4;
+        const double jump_threshold = 5;
         const double eef_step = 0.05;
 
-        fraction = arm_mgi_->computeCartesianPath(waypoints, eef_step, jump_threshold, trajectory);
+        fraction = arm_mgi_->computeCartesianPath(waypoints, eef_step, jump_threshold, trajectory, true);
 
-        visual_tools_->deleteAllMarkers();
-
-        for (std::size_t i = 0; i < waypoints.size(); ++i)
-            visual_tools_->publishAxis(waypoints[i]);
-        visual_tools_->trigger();
-
-        if (fraction < 0.8 && attempt < 5)
+        if (fraction < 0.8 && attempt < max_attempts)
         {
-            translation.z() = translation.z() * 0.95;
+            translation.z() = translation.z() * 0.90;
             ROS_INFO_NAMED("tutorial", "Cartesian path FAILED (%.2f%% achieved)", fraction * 100.0);
         }
         else if (fraction >= 0.8)
         {
             ROS_INFO_NAMED("tutorial", "Visualizing Cartesian path (%.2f%% achieved)", fraction * 100.0);
         }
-        else
+        else if (attempt >= max_attempts)
         {
             ROS_ERROR("Can't plan for full motion");
             return false;
@@ -608,7 +609,104 @@ bool HRI_Interface::screw_unscrew(bool mode, geometry_msgs::Pose input_pose)
     gripper_mgi_->move();
     arm_mgi_->execute(planSetInitialPosition);
     arm_mgi_->execute(trajectory);
-    visual_tools_->deleteAllMarkers();
+    // visual_tools_->deleteAllMarkers();
+
+    return true;
+}
+
+bool HRI_Interface::screw_unscrew_constrains(geometry_msgs::Pose input_pose)
+{
+    arm_mgi_->setStartStateToCurrentState();
+
+    double distance = 0.10;
+    double maxBound = arm_mgi_->getRobotModel()->getVariableBounds(arm_mgi_->getActiveJoints().at(6)).max_position_;
+    double minBound = arm_mgi_->getRobotModel()->getVariableBounds(arm_mgi_->getActiveJoints().at(6)).min_position_;
+
+    moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
+
+    Eigen::Isometry3d ref_eigen;
+    Eigen::Isometry3d translated_eigen;
+    visual_tools_->convertPoseSafe(input_pose, ref_eigen);
+    visual_tools_->convertPoseSafe(input_pose, translated_eigen);
+
+    ref_eigen.translate(Eigen::Vector3d(0, 0, 0.14));
+    translated_eigen.translate(Eigen::Vector3d(0, 0, -distance));
+
+    auto reference_pose = visual_tools_->convertPose(ref_eigen);
+    auto translated_pose = visual_tools_->convertPose(translated_eigen);
+
+    if (!computeLookPose(arm_state, input_pose, reference_pose, 5, 5, 0.1, 0.75, 0.75))
+    {
+        ROS_ERROR("The arm can't find a suitable pose");
+        // return false;
+    }
+
+    std::vector<double> close_joint_group_positions;
+    arm_state.copyJointGroupPositions(arm_jmg_, close_joint_group_positions);
+
+    // Set gripper joint to limit to allow a full range of rotation
+
+    close_joint_group_positions.back() = maxBound;
+    arm_state.setJointGroupPositions(arm_jmg_, close_joint_group_positions);
+
+    if (!computeLookPose(arm_state, translated_pose, input_pose, 5, 5, 0.1, 0.75, 0.75))
+    {
+        ROS_ERROR("The arm can't find a suitable pose");
+        // return false;
+    }
+
+    std::vector<double> far_joint_group_positions;
+    arm_state.copyJointGroupPositions(arm_jmg_, far_joint_group_positions);
+
+    far_joint_group_positions.back() = minBound;
+    arm_state.setJointGroupPositions(arm_jmg_, far_joint_group_positions);
+
+    arm_mgi_->setStartStateToCurrentState();
+
+    moveit::planning_interface::MoveGroupInterface::Plan planSetInitialPosition;
+    arm_mgi_->setJointValueTarget(close_joint_group_positions);
+
+    if (!(arm_mgi_->plan(planSetInitialPosition) == moveit::core::MoveItErrorCode::SUCCESS))
+    {
+        ROS_ERROR("Can't plan for initial position");
+        return false;
+    }
+
+    // Plan to the goal pose with OMPL constraints for straight-line motion
+    moveit_msgs::Constraints path_constraints;
+    path_constraints.name = "path_constraints";
+
+    // Define the straight-line constraint using OMPL
+    moveit_msgs::PositionConstraint position_constraint;
+    position_constraint.link_name = arm_mgi_->getLinkNames().back();
+    position_constraint.header.frame_id = "world";
+    position_constraint.constraint_region.primitive_poses.resize(2);
+    position_constraint.constraint_region.primitive_poses[0] = input_pose;
+    position_constraint.constraint_region.primitive_poses[1] = translated_pose;
+    position_constraint.weight = 1.0;
+
+    path_constraints.position_constraints.push_back(position_constraint);
+
+    // Apply the constraints and plan the motion
+    arm_mgi_->setPathConstraints(path_constraints);
+
+    arm_state.setJointGroupPositions(arm_jmg_, close_joint_group_positions);
+    arm_mgi_->setStartState(arm_state);
+
+    moveit::planning_interface::MoveGroupInterface::Plan planSetFinalPosition;
+    arm_mgi_->setJointValueTarget(far_joint_group_positions);
+
+    if (!(arm_mgi_->plan(planSetFinalPosition) == moveit::core::MoveItErrorCode::SUCCESS))
+    {
+        ROS_ERROR("Can't plan for final position");
+        return false;
+    }
+
+    gripper_mgi_->setNamedTarget("close");
+    gripper_mgi_->move();
+    arm_mgi_->execute(planSetInitialPosition);
+    arm_mgi_->execute(planSetFinalPosition);
+    // visual_tools_->deleteAllMarkers();
 
     return true;
 }
@@ -639,7 +737,7 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
 
     ROS_INFO("Attempting \"Rotating\"");
 
-    visual_tools_->deleteAllMarkers();
+    // visual_tools_->deleteAllMarkers();
 
     // Obtain object from scene
     std::map<std::string, moveit_msgs::CollisionObject> objects = planning_scene_interface_->getObjects();
@@ -662,9 +760,9 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
     moveit_msgs::CollisionObject object = objects[object_id];
     geometry_msgs::Pose object_pose = object.pose;
 
-    double radius = sqrt(pow(object.primitives[0].dimensions[0], 2) + pow(object.primitives[0].dimensions[1], 2) + pow(object.primitives[0].dimensions[2], 2));
-    visual_tools_->publishAxis(object_pose);
-    visual_tools_->trigger();
+    double radius = objectBoundingRadius(object);
+    // visual_tools_->publishAxis(object_pose);
+    // visual_tools_->trigger();
 
     Eigen::Isometry3d objectEigen;
     visual_tools_->convertPoseSafe(object_pose, objectEigen);
@@ -683,10 +781,10 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
 
     std::vector<Eigen::Isometry3d> closestApproachOption = findClosestApproachOption(approach_options, linkTransform);
 
-    visual_tools_->publishAxis(approach_options[0]);
-    visual_tools_->publishAxis(approach_options[1]);
-    visual_tools_->publishAxisLabeled(closestApproachOption[0], "Closest");
-    visual_tools_->trigger();
+    // visual_tools_->publishAxis(approach_options[0]);
+    // visual_tools_->publishAxis(approach_options[1]);
+    // visual_tools_->publishAxisLabeled(closestApproachOption[0], "Closest");
+    // visual_tools_->trigger();
 
     bool sucess_pose = false;
     geometry_msgs::Pose lookPose;
@@ -714,10 +812,10 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
         lookPose.position.z = approach.translation().z();
         lookPose.orientation = q_msg;
 
-        visual_tools_->publishAxis(lookPose);
-        visual_tools_->trigger();
+        // visual_tools_->publishAxis(lookPose);
+        // visual_tools_->trigger();
 
-        if (computeLookPose(arm_state, lookPose, object_pose, 10, 5, 0.2, 1.0, 1.0))
+        if (computeLookPose(arm_state, lookPose, object_pose, 5, 5, 0.2, 1.0, 1.0))
         {
             sucess_pose = true;
             break;
@@ -738,11 +836,13 @@ bool HRI_Interface::signalRotate(std::string object_id, Eigen::Vector3d rotation
 
     if (abs(maxBound - lookPose_joint_values.back()) < M_PI_2)
     {
-        lookPose_joint_values.back() -= M_PI_2 - abs(maxBound - lookPose_joint_values.back());
+        // lookPose_joint_values.back() -= M_PI_2 - abs(maxBound - lookPose_joint_values.back());
+        lookPose_joint_values.back() -= M_PI;
     }
     else if (abs(minBound - lookPose_joint_values.back()) < M_PI_2)
     {
-        lookPose_joint_values.back() += M_PI_2 - abs(minBound - lookPose_joint_values.back());
+        // lookPose_joint_values.back() += M_PI_2 - abs(minBound - lookPose_joint_values.back());
+        lookPose_joint_values.back() += M_PI;
     }
 
     arm_mgi_->setJointValueTarget(lookPose_joint_values);
@@ -813,7 +913,7 @@ bool HRI_Interface::pointToPoint(geometry_msgs::Point point)
 
     ROS_INFO("Attempting \"Pointing To Point\"");
 
-    visual_tools_->deleteAllMarkers();
+    // visual_tools_->deleteAllMarkers();
 
     arm_mgi_->setStartStateToCurrentState();
     moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
@@ -853,8 +953,8 @@ bool HRI_Interface::pointToPoint(geometry_msgs::Point point)
     lookPose.position.z = linkTransform.translation().z() + zTarget;
     lookPose.orientation = q_msg;
 
-    visual_tools_->publishAxis(lookPose);
-    visual_tools_->trigger();
+    // visual_tools_->publishAxis(lookPose);
+    // visual_tools_->trigger();
 
     geometry_msgs::Pose pointPose;
     pointPose.position = point;
@@ -886,7 +986,7 @@ bool HRI_Interface::pointToObject(std::string object_id)
 
     ROS_INFO("Attempting \"Pointing To Object\"");
 
-    visual_tools_->deleteAllMarkers();
+    // visual_tools_->deleteAllMarkers();
 
     // Obtain object from scene
     std::map<std::string, moveit_msgs::CollisionObject> objects = planning_scene_interface_->getObjects();
@@ -895,12 +995,10 @@ bool HRI_Interface::pointToObject(std::string object_id)
     moveit_msgs::CollisionObject object = objects[object_id];
     geometry_msgs::Pose object_pose = object.pose;
 
-    double radius = sqrt(pow(object.primitives[0].dimensions[0], 2) + pow(object.primitives[0].dimensions[1], 2) + pow(object.primitives[0].dimensions[2], 2));
-    visual_tools_->publishSphere(object_pose, rviz_visual_tools::PINK, radius);
-    visual_tools_->publishAxis(object.pose);
-    visual_tools_->trigger();
-
-    visual_tools_->prompt("");
+    double radius = objectBoundingRadius(object);
+    // visual_tools_->publishSphere(object_pose, rviz_visual_tools::PINK, radius);
+    // visual_tools_->publishAxis(object.pose);
+    // visual_tools_->trigger();
 
     // Create a vector from shoulder to object to calculate pose
 
@@ -940,10 +1038,8 @@ bool HRI_Interface::pointToObject(std::string object_id)
     lookPose.position.z = linkTransform.translation().z() + zTarget;
     lookPose.orientation = q_msg;
 
-    visual_tools_->publishAxis(lookPose);
-    visual_tools_->trigger();
-
-    visual_tools_->prompt("");
+    // visual_tools_->publishAxis(lookPose);
+    // visual_tools_->trigger();
 
     if (!computeLookPose(arm_state, lookPose, object_pose, 10, 5, 0.2, 2.0, 2.0))
     {
@@ -971,7 +1067,7 @@ bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sid
 {
     ROS_INFO("Attempting \"Pointing To Object Side\"");
 
-    visual_tools_->deleteAllMarkers();
+    // visual_tools_->deleteAllMarkers();
 
     // Obtain object from scene
     std::map<std::string, moveit_msgs::CollisionObject> objects = planning_scene_interface_->getObjects();
@@ -994,9 +1090,9 @@ bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sid
     moveit_msgs::CollisionObject object = objects[object_id];
     geometry_msgs::Pose object_pose = object.pose;
 
-    double radius = sqrt(pow(object.primitives[0].dimensions[0], 2) + pow(object.primitives[0].dimensions[1], 2) + pow(object.primitives[0].dimensions[2], 2));
-    visual_tools_->publishAxis(object_pose);
-    visual_tools_->trigger();
+    double radius = objectBoundingRadius(object);
+    // visual_tools_->publishAxis(object_pose);
+    // visual_tools_->trigger();
 
     // Create a vector from shoulder to object to calculate pose
 
@@ -1005,8 +1101,8 @@ bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sid
 
     objectEigen.translate(sideInfo * (radius + 0.1));
 
-    visual_tools_->publishAxis(objectEigen);
-    visual_tools_->trigger();
+    // visual_tools_->publishAxis(objectEigen);
+    // visual_tools_->trigger();
 
     double xTarget = object_pose.position.x - objectEigen.translation().x();
     double yTarget = object_pose.position.y - objectEigen.translation().y();
@@ -1029,8 +1125,8 @@ bool HRI_Interface::pointToObjectSide(std::string object_id, Eigen::Vector3d sid
     lookPose.position.z = objectEigen.translation().z();
     lookPose.orientation = q_msg;
 
-    visual_tools_->publishAxis(lookPose);
-    visual_tools_->trigger();
+    // visual_tools_->publishAxis(lookPose);
+    // visual_tools_->trigger();
 
     arm_mgi_->setStartStateToCurrentState();
     moveit::core::RobotState arm_state(*arm_mgi_->getCurrentState());
@@ -1063,7 +1159,7 @@ bool HRI_Interface::pointToHuman(std::string target_frame)
 {
     ROS_INFO("Attempting \"Pointing To Human\"");
 
-    visual_tools_->deleteAllMarkers();
+    // visual_tools_->deleteAllMarkers();
 
     // Calculate New Pose Looking at Human
     geometry_msgs::TransformStamped targetTransform;
@@ -1112,8 +1208,8 @@ bool HRI_Interface::pointToHuman(std::string target_frame)
     lookPose.position.z = linkTransform.translation().z() + zTarget;
     lookPose.orientation = q_msg;
 
-    visual_tools_->publishAxis(lookPose);
-    visual_tools_->trigger();
+    // visual_tools_->publishAxis(lookPose);
+    // visual_tools_->trigger();
 
     geometry_msgs::Pose humanPose;
     humanPose.position.x = targetTransform.transform.translation.x;
@@ -1208,17 +1304,17 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose(rviz_visual_tools::colo
                     {
                         sucess = true;
                         range_points.push_back(pose);
-                        visual_tools_->publishSphere(pose, color, 0.025);
-                        visual_tools_->trigger();
-                        visual_tools_->publishRobotState(arm_state, rviz_visual_tools::GREEN);
-                        visual_tools_->trigger();
+                        // visual_tools_->publishSphere(pose, color, 0.025);
+                        // visual_tools_->trigger();
+                        // visual_tools_->publishRobotState(arm_state, rviz_visual_tools::GREEN);
+                        // visual_tools_->trigger();
                     }
                 }
 
                 if (!sucess)
                 {
-                    visual_tools_->publishSphere(pose, rviz_visual_tools::RED, 0.015);
-                    visual_tools_->trigger();
+                    // visual_tools_->publishSphere(pose, rviz_visual_tools::RED, 0.015);
+                    // visual_tools_->trigger();
                 }
 
                 sucess = false;
@@ -1296,17 +1392,17 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose2(rviz_visual_tools::col
     geometry_msgs::Point point = ref_point;
     point.x += 0.50;
 
-    visual_tools_->publishSphere(ref_point, rviz_visual_tools::GREEN);
-    visual_tools_->publishSphere(point, rviz_visual_tools::GREEN);
-    visual_tools_->trigger();
+    // visual_tools_->publishSphere(ref_point, rviz_visual_tools::GREEN);
+    // visual_tools_->publishSphere(point, rviz_visual_tools::GREEN);
+    // visual_tools_->trigger();
 
     std::vector<geometry_msgs::Pose> poses = computePointsOnSphere(20, 15, point, ref_point, 0.20, 2 * M_PI, 2 * M_PI);
 
     for (auto &p : poses)
     {
-        visual_tools_->publishSphere(p, rviz_visual_tools::RED, 0.01);
+        // visual_tools_->publishSphere(p, rviz_visual_tools::RED, 0.01);
     }
-    visual_tools_->trigger();
+    // visual_tools_->trigger();
 
     for (auto pose : poses)
     {
@@ -1322,9 +1418,9 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose2(rviz_visual_tools::col
         if (arm_state.setFromIK(arm_jmg_, pose, 0.005, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
         {
             range_points.push_back(pose);
-            visual_tools_->publishSphere(pose, color, 0.025);
-            visual_tools_->publishRobotState(arm_state, rviz_visual_tools::GREEN);
-            visual_tools_->trigger();
+            // visual_tools_->publishSphere(pose, color, 0.025);
+            // visual_tools_->publishRobotState(arm_state, rviz_visual_tools::GREEN);
+            // visual_tools_->trigger();
             continue;
         }
 
@@ -1335,9 +1431,9 @@ std::vector<geometry_msgs::Pose> HRI_Interface::testPose2(rviz_visual_tools::col
             if (arm_state.setFromIK(arm_jmg_, pose, 0.005, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
             {
                 range_points.push_back(pose);
-                visual_tools_->publishSphere(pose, color, 0.025);
-                visual_tools_->publishRobotState(arm_state, rviz_visual_tools::GREEN);
-                visual_tools_->trigger();
+                // visual_tools_->publishSphere(pose, color, 0.025);
+                // visual_tools_->publishRobotState(arm_state, rviz_visual_tools::GREEN);
+                // visual_tools_->trigger();
                 break;
             }
         }
@@ -1367,7 +1463,7 @@ bool HRI_Interface::demonstratepointToObject(std::string object_id)
 
     ROS_INFO("Attempting \"Pointing To Object\"");
 
-    visual_tools_->deleteAllMarkers();
+    // visual_tools_->deleteAllMarkers();
 
     // Obtain object from scene
     std::map<std::string, moveit_msgs::CollisionObject> objects = planning_scene_interface_->getObjects();
@@ -1377,7 +1473,7 @@ bool HRI_Interface::demonstratepointToObject(std::string object_id)
     geometry_msgs::Pose object_pose = object.pose;
 
     double radius = sqrt(pow(object.primitives[0].dimensions[0], 2) + pow(object.primitives[0].dimensions[1], 2) + pow(object.primitives[0].dimensions[2], 2));
-    visual_tools_->publishSphere(object_pose, rviz_visual_tools::PINK, radius);
+    // visual_tools_->publishSphere(object_pose, rviz_visual_tools::PINK, radius);
 
     // Create a vector from shoulder to object to calculate pose
 
@@ -1417,19 +1513,16 @@ bool HRI_Interface::demonstratepointToObject(std::string object_id)
     lookPose.position.z = linkTransform.translation().z() + zTarget;
     lookPose.orientation = q_msg;
 
-    visual_tools_->publishAxis(lookPose);
-    visual_tools_->trigger();
-
-    visual_tools_->prompt("");
+    // visual_tools_->publishAxis(lookPose);
+    // visual_tools_->trigger();
 
     std::vector<geometry_msgs::Pose> points = computePointsOnSphere(10, 5, lookPose.position, object_pose.position, 0.2, 2.0, 2.0);
 
     for (auto &p : points)
     {
-        visual_tools_->publishAxis(p);
+        // visual_tools_->publishAxis(p);
     }
-    visual_tools_->trigger();
-    visual_tools_->prompt("");
+    // visual_tools_->trigger();
 
     return true;
 }
@@ -1562,8 +1655,6 @@ std::vector<geometry_msgs::Pose> HRI_Interface::computePointsOnSphere(int numPoi
                 // visual_tools_->publishAxis(newPoint);
             }
         }
-        // visual_tools_->trigger();
-        // visual_tools_->prompt("");
     }
 
     std::sort(poses.begin(), poses.end(), [&point](const geometry_msgs::Pose &p1, const geometry_msgs::Pose &p2)
@@ -1654,8 +1745,8 @@ bool HRI_Interface::computeLookPose(moveit::core::RobotState &arm_state, geometr
 
         for (const auto &pose : pose_vector)
         {
-            visual_tools_->publishAxis(pose);
-            visual_tools_->trigger();
+            // visual_tools_->publishAxis(pose);
+            // visual_tools_->trigger();
 
             if (arm_state.setFromIK(arm_jmg_, pose, 0.1, std::bind(&HRI_Interface::isStateValid, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)))
             {
@@ -1668,4 +1759,20 @@ bool HRI_Interface::computeLookPose(moveit::core::RobotState &arm_state, geometr
     }
 
     return true;
+}
+
+double HRI_Interface::objectBoundingRadius(moveit_msgs::CollisionObject object)
+{
+    Eigen::Vector3d object_dimensions;
+    if (object.meshes.size() != 0)
+    {
+        object_dimensions = shapes::computeShapeExtents(object.meshes[0]);
+    }
+    else
+    {
+        object_dimensions.x() = object.primitives[0].dimensions[0];
+        object_dimensions.y() = object.primitives[0].dimensions[1];
+        object_dimensions.z() = object.primitives[0].dimensions[2];
+    }
+    return sqrt(pow(object_dimensions.x(), 2) + pow(object_dimensions.y(), 2) + pow(object_dimensions.z(), 2));
 }
